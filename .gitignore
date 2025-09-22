@@ -1,0 +1,46 @@
+# Python bytecode files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+pysim_env/
+venv/
+ENV/
+env/
+
+# Distribution/build
+build/
+develop-eggs/
+dist/
+download/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# VS Code settings
+.vscode/
+
+# IDE settings
+.idea/
+
+# MuJoCo cache and temp files
+*.mjb
+*.mjc
+
+# Logs and reports
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db

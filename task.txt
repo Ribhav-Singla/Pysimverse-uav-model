@@ -1,0 +1,3 @@
+1. static and dynamic obstacles (number of obstacles are dynamic)
+2. obstacles height should be same, uav is little below that.
+3. 0.2 distance btw obstacle and uav the collision occurs, terminate.
