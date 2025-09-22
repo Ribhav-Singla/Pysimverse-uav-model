@@ -1,15 +1,13 @@
-<mujoco model="simple_uav">
+<mujoco model="complex_uav_env">
   <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
   <option integrator="RK4" timestep="0.01"/>
   
-  <!-- Visual settings -->
   <visual>
     <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3"/>
     <rgba haze="0.15 0.25 0.35 1"/>
     <global offwidth="2560" offheight="1440"/>
   </visual>
   
-  <!-- Asset definitions -->
   <asset>
     <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
     <texture name="grid" type="2d" builtin="checker" rgb1="0.1 0.2 0.3" rgb2="0.2 0.3 0.4" width="512" height="512"/>
@@ -18,41 +16,255 @@
 
   <worldbody>
     <!-- Ground plane -->
-    <geom name="ground" type="plane" size="5 5 0.1" material="grid"/>
-    <light name="light1" pos="0 0 3" dir="0 0 -1" diffuse="1 1 1"/>
+    <geom name="ground" type="plane" size="4.0 4.0 0.1" material="grid"/>
+    <light name="light1" pos="0 0 4" dir="0 0 -1" diffuse="1 1 1"/>
     
     <!-- Start position marker (green) -->
-    <geom name="start_marker" type="cylinder" size="0.1 0.05" pos="-3 -3 0.05" rgba="0 1 0 0.8"/>
-    <geom name="start_label" type="box" size="0.02 0.02 0.3" pos="-3 -3 0.3" rgba="0 1 0 1"/>
+    <geom name="start_marker" type="cylinder" size="0.15 0.05" pos="-4.0 -4.0 0.05" rgba="0 1 0 0.8"/>
+    <geom name="start_pole" type="box" size="0.03 0.03 0.4" pos="-4.0 -4.0 0.4" rgba="0 1 0 1"/>
     
     <!-- Goal position marker (blue) -->
-    <geom name="goal_marker" type="cylinder" size="0.1 0.05" pos="3 3 0.05" rgba="0 0 1 0.8"/>
-    <geom name="goal_label" type="box" size="0.02 0.02 0.3" pos="3 3 0.3" rgba="0 0 1 1"/>
+    <geom name="goal_marker" type="cylinder" size="0.15 0.05" pos="4.0 4.0 0.05" rgba="0 0 1 0.8"/>
+    <geom name="goal_pole" type="box" size="0.03 0.03 0.4" pos="4.0 4.0 0.4" rgba="0 0 1 1"/>
     
-    <!-- Obstacles to navigate around -->
-    <geom name="obstacle1" type="box" size="0.3 0.3 0.5" pos="1 0 0.5" rgba="0.7 0.3 0.1 1"/>
-    <geom name="obstacle2" type="cylinder" size="0.25 0.6" pos="-1 1 0.6" rgba="0.6 0.6 0.1 1"/>
-    <geom name="obstacle3" type="box" size="0.2 0.4 0.4" pos="0 -1.5 0.4" rgba="0.8 0.1 0.8 1"/>
-    <geom name="obstacle4" type="sphere" size="0.3" pos="2 -1 0.3" rgba="0.1 0.8 0.8 1"/>
-    <geom name="obstacle5" type="box" size="0.15 0.6 0.7" pos="-2 0.5 0.7" rgba="0.9 0.5 0.1 1"/>
-    
-    <!-- UAV starting at start position -->
-    <body name="chassis" pos="-3 -3 1.5">
+    <!-- UAV starting position -->
+    <body name="chassis" pos="-4.0 -4.0 1.8">
       <joint type="free" name="root"/>
-      <geom type="box" size="0.15 0.15 0.02" rgba="0.8 0.2 0.2 1" mass="1"/>
+      <geom type="box" size="0.12 0.12 0.02" rgba="0.8 0.2 0.2 1" mass="0.8"/>
       
-      <!-- Propeller visual geometry -->
-      <geom type="cylinder" size="0.02 0.05" pos="0.1 0.1 0" rgba="0.5 0.5 0.5 1"/>
-      <geom type="cylinder" size="0.02 0.05" pos="-0.1 0.1 0" rgba="0.5 0.5 0.5 1"/>
-      <geom type="cylinder" size="0.02 0.05" pos="0.1 -0.1 0" rgba="0.5 0.5 0.5 1"/>
-      <geom type="cylinder" size="0.02 0.05" pos="-0.1 -0.1 0" rgba="0.5 0.5 0.5 1"/>
+      <!-- Propeller arms and motors -->
+      <geom type="box" size="0.08 0.01 0.005" pos="0 0 0.01" rgba="0.3 0.3 0.3 1"/>
+      <geom type="box" size="0.01 0.08 0.005" pos="0 0 0.01" rgba="0.3 0.3 0.3 1"/>
+      
+      <!-- Motor visual geometry -->
+      <geom type="cylinder" size="0.015 0.02" pos="0.08 0.08 0.015" rgba="0.2 0.2 0.2 1"/>
+      <geom type="cylinder" size="0.015 0.02" pos="-0.08 0.08 0.015" rgba="0.2 0.2 0.2 1"/>
+      <geom type="cylinder" size="0.015 0.02" pos="0.08 -0.08 0.015" rgba="0.2 0.2 0.2 1"/>
+      <geom type="cylinder" size="0.015 0.02" pos="-0.08 -0.08 0.015" rgba="0.2 0.2 0.2 1"/>
+      
+      <!-- Propellers -->
+      <geom type="cylinder" size="0.04 0.002" pos="0.08 0.08 0.035" rgba="0.7 0.7 0.7 0.6"/>
+      <geom type="cylinder" size="0.04 0.002" pos="-0.08 0.08 0.035" rgba="0.7 0.7 0.7 0.6"/>
+      <geom type="cylinder" size="0.04 0.002" pos="0.08 -0.08 0.035" rgba="0.7 0.7 0.7 0.6"/>
+      <geom type="cylinder" size="0.04 0.002" pos="-0.08 -0.08 0.035" rgba="0.7 0.7 0.7 0.6"/>
       
       <!-- Sites for motor force application -->
-      <site name="motor1" pos="0.1 0.1 0" size="0.01"/>
-      <site name="motor2" pos="-0.1 0.1 0" size="0.01"/>
-      <site name="motor3" pos="0.1 -0.1 0" size="0.01"/>
-      <site name="motor4" pos="-0.1 -0.1 0" size="0.01"/>
+      <site name="motor1" pos="0.08 0.08 0" size="0.01"/>
+      <site name="motor2" pos="-0.08 0.08 0" size="0.01"/>
+      <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
+      <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
     </body>
+    <geom name="static_obs_0" type="box" size="0.43658053770430794 0.28932093438389034 1.0" pos="-1.0 -3.0 1.0" rgba="0.24121478691470444 0.8487458496342152 0.8525499703406649 1.0"/>
+    <geom name="static_obs_1" type="cylinder" size="0.3260063149245408 1.0" pos="-3.0 3.0 1.0" rgba="0.46266293760325794 0.860275915626852 0.7777716817296507 1.0"/>
+    <geom name="static_obs_2" type="box" size="0.5440897758446966 0.22666668045182853 1.0" pos="1.0 -3.0 1.0" rgba="0.591996236890515 0.8112387295045858 0.7983120924034282 1.0"/>
+    <geom name="static_obs_3" type="cylinder" size="0.35539252104573105 1.0" pos="3.0 3.0 1.0" rgba="0.4856942509771319 0.7475999074046948 0.5350538159634994 1.0"/>
+    <geom name="static_obs_4" type="box" size="0.37368901562358936 0.44141168356625915 1.0" pos="3.0 1.0 1.0" rgba="0.10674128891140403 0.3085594721915198 0.37466155545976043 1.0"/>
+    <geom name="static_obs_5" type="box" size="0.4656371419723058 0.4453370202193109 1.0" pos="-1.0 1.0 1.0" rgba="0.6764744294198952 0.3082183143217676 0.6618926529850635 1.0"/>
+    <geom name="static_obs_6" type="box" size="0.40887160632443575 0.21659310424646702 1.0" pos="-1.0 3.0 1.0" rgba="0.4527428403718592 0.38644442213698194 0.8517474966703135 1.0"/>
+    <geom name="static_obs_7" type="cylinder" size="0.40077569674738633 1.0" pos="-3.0 1.0 1.0" rgba="0.3087719447625772 0.7620973068321737 0.2814239104411872 1.0"/>
+    <geom name="dynamic_obs_0" type="sphere" size="0.10395679327988659" pos="1.0 3.0 1.0" rgba="0.9 0.1 0.1 0.8"/>
+    <geom name="dynamic_obs_1" type="sphere" size="0.210805080351887" pos="3.0 -1.0 1.0" rgba="0.9 0.1 0.1 0.8"/>
+    <geom name="dynamic_obs_2" type="sphere" size="0.16976531651824964" pos="1.0 1.0 1.0" rgba="0.9 0.1 0.1 0.8"/>
+    <site name="path_0" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_1" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_2" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_3" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_4" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_5" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_6" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_7" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_8" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_9" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_10" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_11" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_12" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_13" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_14" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_15" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_16" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_17" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_18" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_19" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_20" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_21" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_22" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_23" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_24" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_25" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_26" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_27" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_28" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_29" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_30" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_31" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_32" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_33" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_34" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_35" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_36" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_37" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_38" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_39" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_40" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_41" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_42" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_43" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_44" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_45" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_46" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_47" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_48" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_49" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_50" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_51" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_52" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_53" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_54" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_55" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_56" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_57" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_58" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_59" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_60" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_61" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_62" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_63" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_64" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_65" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_66" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_67" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_68" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_69" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_70" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_71" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_72" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_73" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_74" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_75" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_76" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_77" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_78" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_79" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_80" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_81" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_82" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_83" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_84" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_85" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_86" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_87" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_88" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_89" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_90" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_91" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_92" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_93" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_94" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_95" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_96" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_97" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_98" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_99" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_100" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_101" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_102" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_103" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_104" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_105" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_106" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_107" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_108" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_109" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_110" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_111" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_112" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_113" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_114" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_115" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_116" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_117" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_118" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_119" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_120" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_121" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_122" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_123" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_124" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_125" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_126" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_127" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_128" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_129" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_130" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_131" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_132" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_133" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_134" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_135" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_136" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_137" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_138" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_139" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_140" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_141" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_142" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_143" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_144" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_145" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_146" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_147" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_148" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_149" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_150" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_151" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_152" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_153" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_154" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_155" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_156" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_157" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_158" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_159" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_160" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_161" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_162" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_163" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_164" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_165" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_166" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_167" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_168" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_169" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_170" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_171" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_172" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_173" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_174" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_175" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_176" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_177" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_178" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_179" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_180" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_181" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_182" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_183" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_184" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_185" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_186" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_187" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_188" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_189" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_190" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_191" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_192" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_193" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_194" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_195" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_196" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_197" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_198" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
+    <site name="path_199" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>
   </worldbody>
 
   <actuator>
