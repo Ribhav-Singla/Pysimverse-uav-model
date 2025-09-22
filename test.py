@@ -38,7 +38,7 @@ CONFIG = {
 class EnvironmentGenerator:
     @staticmethod
     def generate_obstacles():
-        """Generate both static and dynamic obstacles with uniform distribution"""
+        """Generate both static and dynamic obstacles with random non-overlapping positions"""
         obstacles = []
         world_size = CONFIG['world_size']
         half_world = world_size / 2
@@ -57,7 +57,7 @@ class EnvironmentGenerator:
         # Shuffle positions for random assignment
         random.shuffle(positions)
         
-        # Generate static obstacles
+        # Generate static obstacles with random placement
         for i in range(CONFIG['static_obstacles']):
             x, y = positions[i]
             
