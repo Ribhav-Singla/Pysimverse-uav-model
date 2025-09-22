@@ -1,0 +1,64 @@
+<mujoco model="simple_uav">
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
+  <option integrator="RK4" timestep="0.01"/>
+  
+  <!-- Visual settings -->
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global offwidth="2560" offheight="1440"/>
+  </visual>
+  
+  <!-- Asset definitions -->
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.1 0.2 0.3" rgb2="0.2 0.3 0.4" width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="1 1" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <!-- Ground plane -->
+    <geom name="ground" type="plane" size="5 5 0.1" material="grid"/>
+    <light name="light1" pos="0 0 3" dir="0 0 -1" diffuse="1 1 1"/>
+    
+    <!-- Start position marker (green) -->
+    <geom name="start_marker" type="cylinder" size="0.1 0.05" pos="-3 -3 0.05" rgba="0 1 0 0.8"/>
+    <geom name="start_label" type="box" size="0.02 0.02 0.3" pos="-3 -3 0.3" rgba="0 1 0 1"/>
+    
+    <!-- Goal position marker (blue) -->
+    <geom name="goal_marker" type="cylinder" size="0.1 0.05" pos="3 3 0.05" rgba="0 0 1 0.8"/>
+    <geom name="goal_label" type="box" size="0.02 0.02 0.3" pos="3 3 0.3" rgba="0 0 1 1"/>
+    
+    <!-- Obstacles to navigate around -->
+    <geom name="obstacle1" type="box" size="0.3 0.3 0.5" pos="1 0 0.5" rgba="0.7 0.3 0.1 1"/>
+    <geom name="obstacle2" type="cylinder" size="0.25 0.6" pos="-1 1 0.6" rgba="0.6 0.6 0.1 1"/>
+    <geom name="obstacle3" type="box" size="0.2 0.4 0.4" pos="0 -1.5 0.4" rgba="0.8 0.1 0.8 1"/>
+    <geom name="obstacle4" type="sphere" size="0.3" pos="2 -1 0.3" rgba="0.1 0.8 0.8 1"/>
+    <geom name="obstacle5" type="box" size="0.15 0.6 0.7" pos="-2 0.5 0.7" rgba="0.9 0.5 0.1 1"/>
+    
+    <!-- UAV starting at start position -->
+    <body name="chassis" pos="-3 -3 1.5">
+      <joint type="free" name="root"/>
+      <geom type="box" size="0.15 0.15 0.02" rgba="0.8 0.2 0.2 1" mass="1"/>
+      
+      <!-- Propeller visual geometry -->
+      <geom type="cylinder" size="0.02 0.05" pos="0.1 0.1 0" rgba="0.5 0.5 0.5 1"/>
+      <geom type="cylinder" size="0.02 0.05" pos="-0.1 0.1 0" rgba="0.5 0.5 0.5 1"/>
+      <geom type="cylinder" size="0.02 0.05" pos="0.1 -0.1 0" rgba="0.5 0.5 0.5 1"/>
+      <geom type="cylinder" size="0.02 0.05" pos="-0.1 -0.1 0" rgba="0.5 0.5 0.5 1"/>
+      
+      <!-- Sites for motor force application -->
+      <site name="motor1" pos="0.1 0.1 0" size="0.01"/>
+      <site name="motor2" pos="-0.1 0.1 0" size="0.01"/>
+      <site name="motor3" pos="0.1 -0.1 0" size="0.01"/>
+      <site name="motor4" pos="-0.1 -0.1 0" size="0.01"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <motor name="m1" gear="0 0 1 0 0 0" site="motor1"/>
+    <motor name="m2" gear="0 0 1 0 0 0" site="motor2"/>
+    <motor name="m3" gear="0 0 1 0 0 0" site="motor3"/>
+    <motor name="m4" gear="0 0 1 0 0 0" site="motor4"/>
+  </actuator>
+</mujoco>
