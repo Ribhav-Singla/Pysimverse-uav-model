@@ -1,0 +1,35 @@
+<mujoco model="uav_env">
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
+  <option integrator="RK4" timestep="0.01"/>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.1 0.2 0.3" rgb2="0.2 0.3 0.4" width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="1 1" reflectance="0.2"/>
+  </asset>
+  <worldbody>
+    <geom name="ground" type="plane" size="4.0 4.0 0.1" material="grid"/>
+    <light name="light1" pos="0 0 4" dir="0 0 -1" diffuse="1 1 1"/>
+    <body name="chassis" pos="-4.0 -4.0 1.8">
+      <joint type="free" name="root"/>
+      <geom type="box" size="0.12 0.12 0.02" rgba="1.0 0.0 0.0 1.0" mass="0.8"/>
+      <site name="motor1" pos="0.08 0.08 0" size="0.01"/>
+      <site name="motor2" pos="-0.08 0.08 0" size="0.01"/>
+      <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
+      <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
+    </body>
+    <geom name="static_obs_0" type="box" size="0.42604242355987165 0.4788771509284439 1.0" pos="2.666666666666666 -2.666666666666667 1.0" rgba="0.5716549481587525 0.5063181874266067 0.25010073286453327 1.0"/>
+    <geom name="static_obs_1" type="cylinder" size="0.2830414034584129 1.0" pos="-2.666666666666667 -2.666666666666667 1.0" rgba="0.8994691041499224 0.7255603514129391 0.12128204562307215 1.0"/>
+    <geom name="static_obs_2" type="box" size="0.24236690136154926 0.29100158193254116 1.0" pos="0.0 0.0 1.0" rgba="0.6606814662990875 0.7797690607293781 0.17516700759795648 1.0"/>
+    <geom name="static_obs_3" type="box" size="0.31527040418419056 0.30400904634184395 1.0" pos="2.666666666666666 2.666666666666666 1.0" rgba="0.2634086602156167 0.5723503229314492 0.7310926750393547 1.0"/>
+    <geom name="static_obs_4" type="cylinder" size="0.5591957030921644 1.0" pos="-2.666666666666667 2.666666666666666 1.0" rgba="0.19492669266579477 0.77550776897378 0.15908964738798093 1.0"/>
+    <geom name="static_obs_5" type="box" size="0.4657977353122858 0.4282875295650126 1.0" pos="-2.666666666666667 0.0 1.0" rgba="0.16782962810979302 0.3863458997053647 0.4855656540021668 1.0"/>
+    <geom name="static_obs_6" type="cylinder" size="0.38270147148444233 1.0" pos="0.0 -2.666666666666667 1.0" rgba="0.4607602859151001 0.6846138429784803 0.33206230942095943 1.0"/>
+    <geom name="static_obs_7" type="box" size="0.49759933965636394 0.4885551204999961 1.0" pos="0.0 2.666666666666666 1.0" rgba="0.8692263784716248 0.7150565170309788 0.8461861608482791 1.0"/>
+  </worldbody>
+  <actuator>
+    <motor name="m1" gear="0 0 1 0 0 0" site="motor1"/>
+    <motor name="m2" gear="0 0 1 0 0 0" site="motor2"/>
+    <motor name="m3" gear="0 0 1 0 0 0" site="motor3"/>
+    <motor name="m4" gear="0 0 1 0 0 0" site="motor4"/>
+  </actuator>
+</mujoco>

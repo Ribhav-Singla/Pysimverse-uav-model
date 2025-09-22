@@ -1,249 +1,241 @@
-# UAV RL Environment Wrapper
-import gymnasium as gym
 import numpy as np
 import mujoco
+import gymnasium as gym
+from gymnasium import spaces
 import math
 import random
-from gymnasium import spaces
-from uav_config import EnvironmentGenerator, CONFIG
 
-class UAVNavigationEnv(gym.Env):
-    """
-    UAV Navigation Environment for RL Training
-    
-    Observation Space: [current_pos(3), current_vel(3), goal_pos(3)] = 9D
-    Action Space: [vx, vy, vz] = 3D continuous velocity commands
-    """
-    
-    def __init__(self, render_mode=None, max_episode_steps=50000):
+# Configuration from uav_render.py, adapted for the environment
+CONFIG = {
+    'start_pos': np.array([-4.0, -4.0, 1.8]),
+    'goal_pos': np.array([4.0, 4.0, 1.8]),
+    'world_size': 8.0,
+    'obstacle_height': 2.0,
+    'uav_flight_height': 1.8,
+    'static_obstacles': 8,
+    'min_obstacle_size': 0.2,
+    'max_obstacle_size': 0.6,
+    'collision_distance': 0.2,
+    'control_dt': 0.05,
+    'max_steps': 50000,  # Max steps per episode
+}
+
+class EnvironmentGenerator:
+    @staticmethod
+    def generate_obstacles():
+        obstacles = []
+        world_size = CONFIG['world_size']
+        half_world = world_size / 2
+        
+        grid_size = int(math.sqrt(CONFIG['static_obstacles'])) + 1
+        cell_size = world_size / grid_size
+        positions = []
+        
+        for i in range(grid_size):
+            for j in range(grid_size):
+                x = -half_world + (i + 0.5) * cell_size
+                y = -half_world + (j + 0.5) * cell_size
+                positions.append((x, y))
+        
+        random.shuffle(positions)
+        
+        for i in range(CONFIG['static_obstacles']):
+            x, y = positions[i]
+            
+            size_x = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
+            size_y = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
+            height = CONFIG['obstacle_height']
+            
+            obstacle_type = random.choice(['box', 'cylinder'])
+            color = [random.uniform(0.1, 0.9) for _ in range(3)] + [1.0]
+            
+            obstacles.append({
+                'type': 'static',
+                'shape': obstacle_type,
+                'pos': [x, y, height/2],
+                'size': [size_x, size_y, height/2] if obstacle_type == 'box' else [min(size_x, size_y), height/2],
+                'color': color,
+                'id': f'static_obs_{i}'
+            })
+        
+        return obstacles
+
+    @staticmethod
+    def create_xml_with_obstacles(obstacles):
+        xml_template = f'''<mujoco model="uav_env">
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
+  <option integrator="RK4" timestep="0.01"/>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.1 0.2 0.3" rgb2="0.2 0.3 0.4" width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="1 1" reflectance="0.2"/>
+  </asset>
+  <worldbody>
+    <geom name="ground" type="plane" size="{CONFIG['world_size']/2} {CONFIG['world_size']/2} 0.1" material="grid"/>
+    <light name="light1" pos="0 0 4" dir="0 0 -1" diffuse="1 1 1"/>
+    <body name="chassis" pos="{CONFIG['start_pos'][0]} {CONFIG['start_pos'][1]} {CONFIG['start_pos'][2]}">
+      <joint type="free" name="root"/>
+      <geom type="box" size="0.12 0.12 0.02" rgba="1.0 0.0 0.0 1.0" mass="0.8"/>
+      <site name="motor1" pos="0.08 0.08 0" size="0.01"/>
+      <site name="motor2" pos="-0.08 0.08 0" size="0.01"/>
+      <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
+      <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
+    </body>'''
+        for obs in obstacles:
+            if obs['shape'] == 'box':
+                xml_template += f'''
+    <geom name="{obs['id']}" type="box" size="{obs['size'][0]} {obs['size'][1]} {obs['size'][2]}" pos="{obs['pos'][0]} {obs['pos'][1]} {obs['pos'][2]}" rgba="{obs['color'][0]} {obs['color'][1]} {obs['color'][2]} {obs['color'][3]}"/>'''
+            elif obs['shape'] == 'cylinder':
+                xml_template += f'''
+    <geom name="{obs['id']}" type="cylinder" size="{obs['size'][0]} {obs['size'][1]}" pos="{obs['pos'][0]} {obs['pos'][1]} {obs['pos'][2]}" rgba="{obs['color'][0]} {obs['color'][1]} {obs['color'][2]} {obs['color'][3]}"/>'''
+        xml_template += '''
+  </worldbody>
+  <actuator>
+    <motor name="m1" gear="0 0 1 0 0 0" site="motor1"/>
+    <motor name="m2" gear="0 0 1 0 0 0" site="motor2"/>
+    <motor name="m3" gear="0 0 1 0 0 0" site="motor3"/>
+    <motor name="m4" gear="0 0 1 0 0 0" site="motor4"/>
+  </actuator>
+</mujoco>'''
+        with open("environment.xml", 'w') as f:
+            f.write(xml_template)
+        return obstacles
+
+class UAVEnv(gym.Env):
+    metadata = {'render_modes': ['human'], 'render_fps': 30}
+
+    def __init__(self, render_mode=None):
         super().__init__()
-        
-        # Environment parameters
-        self.max_episode_steps = max_episode_steps
-        self.current_step = 0
         self.render_mode = render_mode
+        self.obstacles = EnvironmentGenerator.generate_obstacles()
+        EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
         
-        # MuJoCo model and data
-        self.model = None
-        self.data = None
-        self.obstacles = []
+        self.model = mujoco.MjModel.from_xml_path("environment.xml")
+        self.data = mujoco.MjData(self.model)
         
-        # Define observation space: [pos(3), vel(3), goal(3)]
-        self.observation_space = spaces.Box(
-            low=np.array([-5.0, -5.0, 0.0, -2.0, -2.0, -2.0, -5.0, -5.0, 0.0]),
-            high=np.array([5.0, 5.0, 3.0, 2.0, 2.0, 2.0, 5.0, 5.0, 3.0]),
-            dtype=np.float32
-        )
+        # Observation space: [pos(3), vel(3), goal_dist(3), closest_obstacle_dist(1)]
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
         
-        # Define action space: [vx, vy, vz] velocity commands
-        self.action_space = spaces.Box(
-            low=np.array([-1.0, -1.0, -0.5]),
-            high=np.array([1.0, 1.0, 0.5]),
-            dtype=np.float32
-        )
+        # Action space: 4 motor controls
+        self.action_space = spaces.Box(low=1.0, high=10.0, shape=(4,), dtype=np.float32)
         
-        # State variables
-        self.start_pos = CONFIG['start_pos'].copy()
-        self.goal_pos = CONFIG['goal_pos'].copy()
-        self.current_pos = self.start_pos.copy()
-        self.current_vel = np.zeros(3)
-        self.previous_distance = np.linalg.norm(self.goal_pos - self.start_pos)
-        
-        # Initialize environment
-        self._init_environment()
-    
-    def _init_environment(self):
-        """Initialize the MuJoCo environment"""
-        # Generate obstacles and create XML
-        self.obstacles = EnvironmentGenerator.create_xml_with_obstacles()
-        
-        # Load MuJoCo model
-        try:
-            self.model = mujoco.MjModel.from_xml_path("uav_model.xml")
-            self.data = mujoco.MjData(self.model)
-        except Exception as e:
-            print(f"Error loading MuJoCo model: {e}")
-            raise
-    
-    def reset(self, seed=None, options=None):
-        """Reset the environment to initial state"""
-        super().reset(seed=seed)
-        
-        # Reset step counter
-        self.current_step = 0
-        
-        # Randomize goal position slightly for better generalization
-        if options and options.get('random_goal', False):
-            self.goal_pos = np.array([
-                random.uniform(3.0, 4.5),
-                random.uniform(3.0, 4.5),
-                CONFIG['uav_flight_height']
-            ])
-        else:
-            self.goal_pos = CONFIG['goal_pos'].copy()
-        
-        # Reset UAV to start position
-        self.current_pos = self.start_pos.copy()
-        self.current_vel = np.zeros(3)
-        self.previous_distance = np.linalg.norm(self.goal_pos - self.current_pos)
-        
-        # Reset MuJoCo simulation
-        mujoco.mj_resetData(self.model, self.data)
-        self.data.qpos[:3] = self.current_pos
-        self.data.qpos[3:7] = [1, 0, 0, 0]  # Reset orientation
-        self.data.qvel[:6] = 0  # Reset velocities
-        
-        # Get initial observation
-        observation = self._get_observation()
-        info = {'distance_to_goal': self.previous_distance}
-        
-        return observation, info
-    
-    def step(self, action):
-        """Execute one step in the environment"""
-        self.current_step += 1
-        
-        # Apply action (velocity commands)
-        action = np.clip(action, -1.0, 1.0)  # Direct clipping to [-1, 1]
-        
-        # Convert velocity commands to position update
-        dt = CONFIG['control_dt']
-        velocity_command = action * CONFIG['velocity'] * 2.0  # Scale velocity
-        
-        # Update position based on velocity command
-        new_pos = self.current_pos + velocity_command * dt
-        
-        # Keep UAV within world bounds
-        world_bound = CONFIG['world_size'] / 2 - 0.5
-        new_pos[0] = np.clip(new_pos[0], -world_bound, world_bound)
-        new_pos[1] = np.clip(new_pos[1], -world_bound, world_bound)
-        new_pos[2] = np.clip(new_pos[2], 0.5, 2.5)  # Height bounds
-        
-        # Update velocity (for observation)
-        self.current_vel = (new_pos - self.current_pos) / dt
-        self.current_pos = new_pos
-        
-        # Update MuJoCo simulation
-        self.data.qpos[:3] = self.current_pos
-        mujoco.mj_forward(self.model, self.data)
-        
-        # Calculate reward
-        reward, info = self._calculate_reward()
-        
-        # Check for termination
-        terminated, truncated = self._check_termination()
-        
-        # Get observation
-        observation = self._get_observation()
-        
-        return observation, reward, terminated, truncated, info
-    
-    def _get_observation(self):
-        """Get current observation"""
-        obs = np.concatenate([
-            self.current_pos,     # Current position (3)
-            self.current_vel,     # Current velocity (3)
-            self.goal_pos        # Goal position (3)
-        ]).astype(np.float32)
-        
-        return obs
-    
-    def _calculate_reward(self):
-        """Calculate reward for current state"""
-        reward = 0.0
-        info = {}
-        
-        # Check for collision
-        collision, obstacle_id, collision_dist = EnvironmentGenerator.check_collision(
-            self.current_pos, self.obstacles
-        )
-        
-        if collision:
-            reward = -100.0
-            info['collision'] = True
-            info['obstacle_id'] = obstacle_id
-            return reward, info
-        
-        # Check if reached goal
-        distance_to_goal = np.linalg.norm(self.current_pos - self.goal_pos)
-        
-        if distance_to_goal < 0.5:  # Goal reached
-            reward = 100.0
-            info['goal_reached'] = True
-            return reward, info
-        
-        # Reward for moving towards goal
-        if distance_to_goal < self.previous_distance:
-            reward += 0.1  # Moving towards goal
-        
-        # Small penalty for time to encourage efficiency
-        reward -= 0.001
-        
-        # Update distance tracking
-        self.previous_distance = distance_to_goal
-        info['distance_to_goal'] = distance_to_goal
-        
-        return reward, info
-    
-    def _check_termination(self):
-        """Check if episode should terminate"""
-        terminated = False
-        truncated = False
-        
-        # Check collision
-        collision, _, _ = EnvironmentGenerator.check_collision(
-            self.current_pos, self.obstacles
-        )
-        if collision:
-            terminated = True
-        
-        # Check goal reached
-        distance_to_goal = np.linalg.norm(self.current_pos - self.goal_pos)
-        if distance_to_goal < 0.5:
-            terminated = True
-        
-        # Check timeout
-        if self.current_step >= self.max_episode_steps:
-            truncated = True
-        
-        # Check if UAV is out of bounds (safety)
-        world_bound = CONFIG['world_size'] / 2
-        if (abs(self.current_pos[0]) > world_bound or 
-            abs(self.current_pos[1]) > world_bound or
-            self.current_pos[2] < 0.2 or self.current_pos[2] > 3.0):
-            terminated = True
-        
-        return terminated, truncated
-    
-    def render(self):
-        """Render the environment (optional for training)"""
-        if self.render_mode == "human":
-            # This would open the MuJoCo viewer
-            # For training, we typically don't render to save computation
-            pass
-    
-    def close(self):
-        """Clean up resources"""
-        if hasattr(self, 'viewer') and self.viewer is not None:
-            self.viewer.close()
-            self.viewer = None
+        self.viewer = None
+        self.step_count = 0
 
-# Test the environment
-if __name__ == "__main__":
-    env = UAVNavigationEnv()
-    obs, info = env.reset()
-    print(f"Observation space: {env.observation_space}")
-    print(f"Action space: {env.action_space}")
-    print(f"Initial observation: {obs}")
-    print(f"Initial info: {info}")
-    
-    # Test a few random actions
-    for i in range(5):
-        action = env.action_space.sample()
-        obs, reward, terminated, truncated, info = env.step(action)
-        print(f"Step {i+1}: Action={action}, Reward={reward:.3f}, Done={terminated or truncated}")
+    def step(self, action):
+        self.data.ctrl[:] = action
+        mujoco.mj_step(self.model, self.data)
+        self.step_count += 1
+
+        # Enforce velocity constraints
+        vel = self.data.qvel[:3]
+        speed = np.linalg.norm(vel)
+        if speed < 0.5:
+            self.data.qvel[:3] = (vel / speed) * 0.5 if speed > 0 else np.zeros(3)
+        elif speed > 1.5:
+            self.data.qvel[:3] = (vel / speed) * 1.5
         
+        obs = self._get_obs()
+        reward = self._get_reward(obs)
+        terminated = self._is_terminated(obs)
+        truncated = self.step_count >= CONFIG['max_steps']
+        
+        if self.render_mode == "human":
+            self.render()
+            
+        return obs, reward, terminated, truncated, {}
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        self.step_count = 0
+        
+        # Reset UAV position and state
+        self.data.qpos[:3] = CONFIG['start_pos']
+        self.data.qvel[:] = 0
+        self.data.ctrl[:] = 0
+        
+        # Regenerate obstacles for each episode
+        self.obstacles = EnvironmentGenerator.generate_obstacles()
+        EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+        self.model = mujoco.MjModel.from_xml_path("environment.xml")
+        self.data = mujoco.MjData(self.model)
+        
+        return self._get_obs(), {}
+
+    def render(self):
+        if self.render_mode == "human":
+            if self.viewer is None:
+                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+            self.viewer.sync()
+
+    def close(self):
+        if self.viewer:
+            self.viewer.close()
+
+    def _get_obs(self):
+        pos = self.data.qpos[:3]
+        vel = self.data.qvel[:3]
+        goal_dist = CONFIG['goal_pos'] - pos
+        
+        # Calculate distance to the closest obstacle
+        min_obs_dist = float('inf')
+        for obs in self.obstacles:
+            dist = np.linalg.norm(pos - np.array(obs['pos']))
+            min_obs_dist = min(min_obs_dist, dist)
+            
+        return np.concatenate([pos, vel, goal_dist, [min_obs_dist]])
+
+    def _get_reward(self, obs):
+        pos = obs[:3]
+        vel = obs[3:6]
+        goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
+        
+        reward = 0
+        # Reward for moving towards the goal
+        if np.dot(vel, (CONFIG['goal_pos'] - pos)) > 0:
+            reward += 0.1
+
+        # Penalty for collision
+        if self._check_collision(pos):
+            reward = -100
+            
+        # Reward for reaching the goal
+        if goal_dist < 0.5:
+            reward = 100
+            
+        return reward
+
+    def _is_terminated(self, obs):
+        pos = obs[:3]
+        goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
+        
+        return self._check_collision(pos) or goal_dist < 0.5
+
+    def _check_collision(self, uav_pos):
+        for obs in self.obstacles:
+            obs_pos = np.array(obs['pos'])
+            if obs['shape'] == 'box':
+                dx = max(abs(uav_pos[0] - obs_pos[0]) - obs['size'][0], 0)
+                dy = max(abs(uav_pos[1] - obs_pos[1]) - obs['size'][1], 0)
+                dz = max(abs(uav_pos[2] - obs_pos[2]) - obs['size'][2], 0)
+                distance = math.sqrt(dx*dx + dy*dy + dz*dz)
+            elif obs['shape'] == 'cylinder':
+                horizontal_dist = math.sqrt((uav_pos[0]-obs_pos[0])**2 + (uav_pos[1]-obs_pos[1])**2)
+                vertical_dist = abs(uav_pos[2] - obs_pos[2])
+                distance = max(horizontal_dist - obs['size'][0], vertical_dist - obs['size'][1])
+            
+            if distance < CONFIG['collision_distance']:
+                return True
+        return False
+
+if __name__ == '__main__':
+    # Example of using the environment
+    env = UAVEnv(render_mode="human")
+    obs, _ = env.reset()
+    done = False
+    while not done:
+        action = env.action_space.sample()  # Random action
+        obs, reward, terminated, truncated, _ = env.step(action)
         if terminated or truncated:
-            break
-    
+            done = True
     env.close()

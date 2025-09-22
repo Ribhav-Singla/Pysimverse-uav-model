@@ -1,7 +1,16 @@
-# UAV Navigation Configuration and Utilities
+# UAV Navigation Simulation
 import numpy as np
+import mujoco
+import mujoco.viewer
+import time
 import math
 import random
+import torch
+from ppo_agent import PPOAgent
+from uav_env import UAVEnv, EnvironmentGenerator
+
+# Define the path to your XML model
+MODEL_PATH = "environment.xml"
 
 # Configuration parameters for easy tweaking
 CONFIG = {
@@ -31,7 +40,7 @@ CONFIG = {
 class EnvironmentGenerator:
     @staticmethod
     def generate_obstacles():
-        """Generate both static and dynamic obstacles with uniform distribution"""
+        """Generate both static and dynamic obstacles with random non-overlapping positions"""
         obstacles = []
         world_size = CONFIG['world_size']
         half_world = world_size / 2
@@ -50,7 +59,7 @@ class EnvironmentGenerator:
         # Shuffle positions for random assignment
         random.shuffle(positions)
         
-        # Generate static obstacles
+        # Generate static obstacles with random placement
         for i in range(CONFIG['static_obstacles']):
             x, y = positions[i]
             
@@ -76,7 +85,6 @@ class EnvironmentGenerator:
     @staticmethod
     def create_xml_with_obstacles():
         """Create XML model with dynamically generated obstacles"""
-        MODEL_PATH = "uav_model.xml"
         xml_template = f'''<mujoco model="complex_uav_env">
   <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
   <option integrator="RK4" timestep="0.01"/>
@@ -212,3 +220,183 @@ class EnvironmentGenerator:
                 return True, obs['id'], distance
         
         return False, None, float('inf')
+
+import os
+
+# ... (rest of the imports)
+
+# ... (CONFIG and EnvironmentGenerator class)
+
+# Generate complex environment
+print("🏗️ Generating complex environment with static obstacles...")
+obstacles = EnvironmentGenerator.create_xml_with_obstacles()
+
+# Load the model and create the simulation data
+model = mujoco.MjModel.from_xml_path(MODEL_PATH)
+data = mujoco.MjData(model)
+
+print(f"🚁 Complex UAV Navigation Environment Loaded!")
+print(f"📊 Model: {model.nu} actuators, {model.nbody} bodies")
+print(f"🎯 Mission: Navigate from START (green) to GOAL (blue)")
+print(f"🚧 Static obstacles: {CONFIG['static_obstacles']}")
+print(f"📏 Obstacle height: {CONFIG['obstacle_height']}m")
+print(f"✈️ UAV flight height: {CONFIG['uav_flight_height']}m")
+print(f"🛣️ Green path trail: {CONFIG['path_trail_length']} points")
+
+# Initialize PPO agent
+env = UAVEnv()
+state_dim = env.observation_space.shape[0]
+action_dim = env.action_space.shape[0]
+ppo_agent = PPOAgent(state_dim, action_dim, 0, 0, 0, 0, 0)
+
+# Load the latest trained model
+try:
+    checkpoint_dir = "PPO_preTrained/UAVEnv/"
+    files = os.listdir(checkpoint_dir)
+    paths = [os.path.join(checkpoint_dir, basename) for basename in files]
+    latest_model = max(paths, key=os.path.getctime)
+    ppo_agent.load(latest_model)
+    print(f"🤖 Trained PPO agent loaded successfully from {latest_model}!")
+except:
+    print("⚠️ Could not load trained agent. Using random actions.")
+
+path_history = []
+# ... (rest of the script)
+
+
+def update_path_trail(model, data, current_pos):
+    """Update the path trail visualization."""
+    path_history.append(current_pos.copy())
+    if len(path_history) > CONFIG['path_trail_length']:
+        path_history.pop(0)
+    
+    trail_count = len(path_history)
+    total_geoms = model.ngeom
+    trail_start_idx = total_geoms - CONFIG['path_trail_length']
+    
+    for i in range(CONFIG['path_trail_length']):
+        geom_idx = trail_start_idx + i
+        if 0 <= geom_idx < total_geoms and i < trail_count:
+            model.geom_pos[geom_idx] = path_history[i]
+            alpha = 0.3 + 0.5 * (i / max(1, trail_count))
+            model.geom_rgba[geom_idx] = [0.0, 1.0, 0.0, alpha]
+        elif 0 <= geom_idx < total_geoms:
+            model.geom_pos[geom_idx] = [0, 0, -10]
+            model.geom_rgba[geom_idx] = [0, 0, 0, 0]
+
+# Open viewer
+with mujoco.viewer.launch_passive(model, data) as viewer:
+    # Reset simulation
+    mujoco.mj_resetData(model, data)
+    
+    # Set initial position
+    data.qpos[:3] = CONFIG['start_pos']
+    data.qpos[3:7] = [1, 0, 0, 0]  # Initial orientation (quaternion)
+    
+    print("Mission started! Watch the PPO agent control the UAV!")
+    time.sleep(2)
+    
+    step_count = 0
+    mission_complete = False
+    collision_occurred = False
+    
+    try:
+        while viewer.is_running() and not mission_complete and not collision_occurred:
+            # Get current UAV state
+            current_pos = data.qpos[:3].copy()
+            current_vel = data.qvel[:3].copy()
+            
+            # Create observation for PPO agent
+            goal_dist = CONFIG['goal_pos'] - current_pos
+            min_obs_dist = float('inf')
+            for obs in obstacles:
+                dist = np.linalg.norm(current_pos - np.array(obs['pos']))
+                min_obs_dist = min(min_obs_dist, dist)
+            
+            state = np.concatenate([current_pos, current_vel, goal_dist, [min_obs_dist]])
+
+            # Agent selects action
+            action, _ = ppo_agent.select_action(state)
+            data.ctrl[:] = action
+            
+            # Step the simulation
+            mujoco.mj_step(model, data)
+
+            # Enforce velocity constraints
+            vel = data.qvel[:3]
+            speed = np.linalg.norm(vel)
+            if speed < 0.5:
+                data.qvel[:3] = (vel / speed) * 0.5 if speed > 0 else np.zeros(3)
+            elif speed > 1.5:
+                data.qvel[:3] = (vel / speed) * 1.5
+            
+            # Update path trail visualization
+            if step_count % 5 == 0:
+                update_path_trail(model, data, current_pos)
+            
+            # Forward model to update rendering
+            viewer.sync()
+            
+            # Check for collision
+            has_collision, obstacle_id, collision_dist = EnvironmentGenerator.check_collision(data.qpos[:3], obstacles)
+            if has_collision:
+                collision_occurred = True
+                print(f"\n💥 COLLISION DETECTED!")
+                print(f"💀 UAV crashed into obstacle: {obstacle_id}")
+                print(f"📏 Collision distance: {collision_dist:.3f}m")
+                print(f"📍 UAV position at crash: ({data.qpos[0]:.2f}, {data.qpos[1]:.2f}, {data.qpos[2]:.2f})")
+                print(f"⚠️ MISSION FAILED!")
+                break
+            
+            # Check if mission is complete
+            goal_distance = np.linalg.norm(current_pos - CONFIG['goal_pos'])
+            if goal_distance < 0.5:
+                mission_complete = True
+                print(f"\n🎉 MISSION COMPLETE! UAV reached the goal!")
+                print(f"Final position: {current_pos}")
+                print(f"Distance to goal: {goal_distance:.2f}m")
+                print(f"🏆 SUCCESS! No collisions occurred!")
+            
+            # Status updates
+            if step_count % 100 == 0:
+                print(f"Step {step_count:4d}: Pos=({current_pos[0]:.1f},{current_pos[1]:.1f},{current_pos[2]:.1f}) | Goal dist: {goal_distance:.2f}m")
+            
+            step_count += 1
+            time.sleep(CONFIG['control_dt'])
+            
+    except KeyboardInterrupt:
+        print("\nSimulation interrupted by user")
+    
+    # Final mission status
+    if collision_occurred:
+        print("\n" + "="*50)
+        print("💥 MISSION RESULT: FAILURE - COLLISION DETECTED")
+        print("🚨 The UAV crashed into an obstacle!")
+        print("💡 Try adjusting flight path or obstacle avoidance")
+        print("="*50)
+        
+        # Show crash scene for a moment
+        for _ in range(200):
+            mujoco.mj_forward(model, data)
+            viewer.sync()
+            time.sleep(0.02)
+            
+    elif mission_complete:
+        # Celebration hover
+        print("\n" + "="*50)
+        print("🎉 MISSION RESULT: SUCCESS!")
+        print("🏆 UAV successfully navigated to goal without collision!")
+        print("="*50)
+        print("🎊 Celebration hover sequence...")
+        
+        for _ in range(500):
+            data.ctrl[:] = [4.0, 4.0, 4.0, 4.0]  # Stronger hover thrust
+            mujoco.mj_step(model, data)
+            viewer.sync()
+            time.sleep(0.01)
+    else:
+        print("\n" + "="*50)
+        print("⏹️ SIMULATION TERMINATED")
+        print("="*50)
+
+    print("Simulation finished.")
