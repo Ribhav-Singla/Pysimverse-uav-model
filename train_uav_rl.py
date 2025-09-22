@@ -458,8 +458,8 @@ def main():
     """Main training function"""
     # Training configuration
     config = {
-        'total_episodes': 50,  # Shorter for demo with rendering
-        'max_episode_steps': 200,  # Shorter episodes
+        'total_episodes': 500,  # Shorter for demo with rendering
+        'max_episode_steps': 50000,  # Shorter episodes
         'update_frequency': 100,  # More frequent updates
         'save_frequency': 25,
         'eval_frequency': 20,

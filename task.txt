@@ -1,3 +1,4 @@
+train_uav_rl, render_uav, train_with_rendering
 1. static and dynamic obstacles (number of obstacles are dynamic) and start and end positions.
 2. obstacles height should be same, uav is little below that.
 3. 0.2 distance btw obstacle and uav the collision occurs, terminate.
