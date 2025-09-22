@@ -29,10 +29,8 @@ CONFIG = {
     'obstacle_height': 2.0,                      # Fixed height for all obstacles
     'uav_flight_height': 1.8,                   # UAV flies below obstacle tops
     'static_obstacles': 8,                       # Number of static obstacles
-    'dynamic_obstacles': 3,                      # Number of dynamic obstacles
     'min_obstacle_size': 0.2,                    # Minimum obstacle dimension
     'max_obstacle_size': 0.6,                    # Maximum obstacle dimension
-    'dynamic_speed': 0.1,                        # Speed of dynamic obstacles (m/s)
     'collision_distance': 0.2,                   # Collision threshold (m)
     'path_trail_length': 200,                    # Number of points to keep in the path trail
 }
@@ -46,7 +44,7 @@ class EnvironmentGenerator:
         half_world = world_size / 2
         
         # Generate a grid of possible positions for uniform distribution
-        grid_size = int(math.sqrt(CONFIG['static_obstacles'] + CONFIG['dynamic_obstacles'])) + 1
+        grid_size = int(math.sqrt(CONFIG['static_obstacles'])) + 1
         cell_size = world_size / grid_size
         positions = []
         
@@ -78,30 +76,6 @@ class EnvironmentGenerator:
                 'size': [size_x, size_y, height/2] if obstacle_type == 'box' else [min(size_x, size_y), height/2],
                 'color': color,
                 'id': f'static_obs_{i}'
-            })
-        
-        # Generate dynamic obstacles
-        for i in range(CONFIG['dynamic_obstacles']):
-            idx = CONFIG['static_obstacles'] + i
-            x, y = positions[idx]
-            
-            size = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
-            height = CONFIG['obstacle_height']
-            
-            # Random movement direction
-            direction = random.uniform(0, 2 * math.pi)
-            velocity = [CONFIG['dynamic_speed'] * math.cos(direction), 
-                       CONFIG['dynamic_speed'] * math.sin(direction)]
-            
-            obstacles.append({
-                'type': 'dynamic',
-                'shape': 'sphere',
-                'pos': [x, y, height/2],
-                'size': [size/2],  # radius for sphere
-                'color': [0.9, 0.1, 0.1, 0.8],  # Red for dynamic
-                'velocity': velocity,
-                'bounds': [-world_size/2 + 1, world_size/2 - 1],
-                'id': f'dynamic_obs_{i}'
             })
         
         return obstacles
@@ -141,7 +115,7 @@ class EnvironmentGenerator:
     <!-- UAV starting position -->
     <body name="chassis" pos="{CONFIG['start_pos'][0]} {CONFIG['start_pos'][1]} {CONFIG['start_pos'][2]}">
       <joint type="free" name="root"/>
-      <geom type="box" size="0.12 0.12 0.02" rgba="0.8 0.2 0.2 1" mass="0.8"/>
+      <geom type="box" size="0.12 0.12 0.02" rgba="1.0 0.0 0.0 1.0" mass="0.8"/>
       
       <!-- Propeller arms and motors -->
       <geom type="box" size="0.08 0.01 0.005" pos="0 0 0.01" rgba="0.3 0.3 0.3 1"/>
@@ -154,10 +128,10 @@ class EnvironmentGenerator:
       <geom type="cylinder" size="0.015 0.02" pos="-0.08 -0.08 0.015" rgba="0.2 0.2 0.2 1"/>
       
       <!-- Propellers -->
-      <geom type="cylinder" size="0.04 0.002" pos="0.08 0.08 0.035" rgba="0.7 0.7 0.7 0.6"/>
-      <geom type="cylinder" size="0.04 0.002" pos="-0.08 0.08 0.035" rgba="0.7 0.7 0.7 0.6"/>
-      <geom type="cylinder" size="0.04 0.002" pos="0.08 -0.08 0.035" rgba="0.7 0.7 0.7 0.6"/>
-      <geom type="cylinder" size="0.04 0.002" pos="-0.08 -0.08 0.035" rgba="0.7 0.7 0.7 0.6"/>
+      <geom type="cylinder" size="0.04 0.002" pos="0.08 0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
+      <geom type="cylinder" size="0.04 0.002" pos="-0.08 0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
+      <geom type="cylinder" size="0.04 0.002" pos="0.08 -0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
+      <geom type="cylinder" size="0.04 0.002" pos="-0.08 -0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
       
       <!-- Sites for motor force application -->
       <site name="motor1" pos="0.08 0.08 0" size="0.01"/>
@@ -179,10 +153,10 @@ class EnvironmentGenerator:
                 xml_template += f'''
     <geom name="{obs['id']}" type="sphere" size="{obs['size'][0]}" pos="{obs['pos'][0]} {obs['pos'][1]} {obs['pos'][2]}" rgba="{obs['color'][0]} {obs['color'][1]} {obs['color'][2]} {obs['color'][3]}"/>'''
         
-        # Add path trail sites (initially invisible)
+        # Add dynamic trail geometries that will follow the UAV's actual path
         for i in range(CONFIG['path_trail_length']):
             xml_template += f'''
-    <site name="path_{i}" type="sphere" size="0.03" pos="0 0 0" rgba="0 0 0 0"/>'''
+    <geom name="trail_{i}" type="sphere" size="0.02" pos="0 0 -10" rgba="0 1 0 0.6" contype="0" conaffinity="0"/>'''
         
         xml_template += '''
   </worldbody>
@@ -251,7 +225,6 @@ class UAVController:
         self.goal_pos = CONFIG['goal_pos']
         self.current_waypoint = 0
         self.waypoints = self.generate_waypoints()
-        self.dynamic_obstacles = []
         self.all_obstacles = []
         self.path_history = []  # Store UAV position history for path visualization
         self.path_index = 0     # Current index in the path trail
@@ -270,28 +243,8 @@ class UAVController:
         ]
         return waypoints
     
-    def update_dynamic_obstacles(self, obstacles, dt):
-        """Update positions of dynamic obstacles"""
-        world_bound = CONFIG['world_size'] / 2
-        
-        for obs in obstacles:
-            if obs['type'] == 'dynamic':
-                # Update position
-                obs['pos'][0] += obs['velocity'][0] * dt
-                obs['pos'][1] += obs['velocity'][1] * dt
-                
-                # Bounce off boundaries
-                if obs['pos'][0] <= -world_bound + 0.5 or obs['pos'][0] >= world_bound - 0.5:
-                    obs['velocity'][0] *= -1
-                if obs['pos'][1] <= -world_bound + 0.5 or obs['pos'][1] >= world_bound - 0.5:
-                    obs['velocity'][1] *= -1
-                
-                # Keep within bounds
-                obs['pos'][0] = np.clip(obs['pos'][0], -world_bound + 0.5, world_bound - 0.5)
-                obs['pos'][1] = np.clip(obs['pos'][1], -world_bound + 0.5, world_bound - 0.5)
-    
     def update_path_trail(self, model, data, current_pos):
-        """Update the path trail visualization"""
+        """Update the path trail visualization with green dotted line following UAV's actual path"""
         # Add current position to history
         self.path_history.append(current_pos.copy())
         
@@ -299,17 +252,29 @@ class UAVController:
         if len(self.path_history) > CONFIG['path_trail_length']:
             self.path_history.pop(0)
         
-        # Update the path sites in the model
-        for i, pos in enumerate(self.path_history):
-            site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, f"path_{i}")
-            if site_id != -1:
-                # Calculate color based on position in trail (fade from yellow to red)
-                alpha = 0.7 * (i / len(self.path_history))
-                color = [1.0, 1.0 - alpha, 0.0, 0.7]  # Yellow to red gradient
+        # Update trail positions directly using geometry positions
+        # Find trail geometries and update their positions
+        trail_count = min(len(self.path_history), CONFIG['path_trail_length'])
+        
+        # We'll update trail geometries by accessing them directly through model.geom_pos
+        # Trail geometries should be the last ones added to the model
+        total_geoms = model.ngeom
+        trail_start_idx = total_geoms - CONFIG['path_trail_length']
+        
+        for i in range(CONFIG['path_trail_length']):
+            geom_idx = trail_start_idx + i
+            
+            if 0 <= geom_idx < total_geoms and i < trail_count:
+                # Update position to show the trail
+                model.geom_pos[geom_idx] = self.path_history[i]
                 
-                # Update site position and color
-                data.site_xpos[site_id] = pos
-                model.site_rgba[site_id] = color
+                # Update alpha for fading effect
+                alpha = 0.3 + 0.5 * (i / max(1, trail_count))
+                model.geom_rgba[geom_idx] = [0.0, 1.0, 0.0, alpha]
+            elif 0 <= geom_idx < total_geoms:
+                # Hide unused trail points underground
+                model.geom_pos[geom_idx] = [0, 0, -10]
+                model.geom_rgba[geom_idx] = [0, 0, 0, 0]
     
     def get_target_position(self, current_pos):
         """Get the current target waypoint"""
@@ -357,7 +322,7 @@ class UAVController:
         return np.clip(motor_controls, 1.0, 10.0)  # Higher thrust range
 
 # Generate complex environment
-print("🏗️ Generating complex environment with dynamic obstacles...")
+print("🏗️ Generating complex environment with static obstacles...")
 obstacles = EnvironmentGenerator.create_xml_with_obstacles()
 
 # Load the model and create the simulation data
@@ -368,14 +333,12 @@ print(f"🚁 Complex UAV Navigation Environment Loaded!")
 print(f"📊 Model: {model.nu} actuators, {model.nbody} bodies")
 print(f"🎯 Mission: Navigate from START (green) to GOAL (blue)")
 print(f"🚧 Static obstacles: {CONFIG['static_obstacles']}")
-print(f"🔴 Dynamic obstacles: {CONFIG['dynamic_obstacles']}")
 print(f"📏 Obstacle height: {CONFIG['obstacle_height']}m")
 print(f"✈️ UAV flight height: {CONFIG['uav_flight_height']}m")
-print(f"🛣️ Path trail: {CONFIG['path_trail_length']} points")
+print(f"🛣️ Green path trail: {CONFIG['path_trail_length']} points")
 
 # Initialize controller
 controller = UAVController()
-controller.dynamic_obstacles = [obs for obs in obstacles if obs['type'] == 'dynamic']
 controller.all_obstacles = obstacles
 
 # Open viewer
@@ -401,8 +364,8 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             current_pos = data.qpos[:3].copy()
             current_vel = data.qvel[:3].copy()
             
-            # Update path trail visualization
-            if step_count % 5 == 0:  # Update trail every 5 steps
+            # Update path trail visualization (less frequently for performance)
+            if step_count % 10 == 0:  # Update trail every 10 steps instead of 5
                 controller.update_path_trail(model, data, current_pos)
             
             # Takeoff phase - apply strong upward thrust first
@@ -420,15 +383,6 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 
                 # Calculate motor controls
                 motor_controls = controller.calculate_control(current_pos, current_vel, target_pos)
-            
-            # Update dynamic obstacles
-            controller.update_dynamic_obstacles(controller.dynamic_obstacles, CONFIG['control_dt'])
-            
-            # Update dynamic obstacle positions in simulation
-            for i, obs in enumerate(controller.dynamic_obstacles):
-                geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, obs['id'])
-                if geom_id >= 0:
-                    model.geom_pos[geom_id][:3] = obs['pos']
             
             # Manually update UAV position for visualization
             target_pos = controller.get_target_position(current_pos)

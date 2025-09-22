@@ -1,4 +1,8 @@
-1. static and dynamic obstacles (number of obstacles are dynamic)
+1. static and dynamic obstacles (number of obstacles are dynamic) and start and end positions.
 2. obstacles height should be same, uav is little below that.
 3. 0.2 distance btw obstacle and uav the collision occurs, terminate.
 4. add a line of motion of uav(path covered).
+5. create rl agent ppo(uav) that will learn to navigate to dynamic start and goal positions in this environment.
+6. Use lidar for obstacle detection.
+7. Initialise the state space (position, velocity etc.), action space(change of coordinates, velocity)
+8. Velocity range (0.15 to 0.5).
