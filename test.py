@@ -29,7 +29,7 @@ CONFIG = {
     'obstacle_height': 2.0,                      # Fixed height for all obstacles
     'uav_flight_height': 1.8,                   # UAV flies below obstacle tops
     'static_obstacles': 8,                       # Number of static obstacles
-    'dynamic_obstacles': 3,                      # Number of dynamic obstacles
+    'dynamic_obstacles': 0,                      # Number of dynamic obstacles
     'min_obstacle_size': 0.2,                    # Minimum obstacle dimension
     'max_obstacle_size': 0.6,                    # Maximum obstacle dimension
     'dynamic_speed': 0.1,                        # Speed of dynamic obstacles (m/s)
@@ -40,69 +40,88 @@ CONFIG = {
 class EnvironmentGenerator:
     @staticmethod
     def generate_obstacles():
-        """Generate both static and dynamic obstacles with uniform distribution"""
+        """Generate both static and dynamic obstacles with random non-overlapping positions"""
         obstacles = []
         world_size = CONFIG['world_size']
         half_world = world_size / 2
         
-        # Generate a grid of possible positions for uniform distribution
-        grid_size = int(math.sqrt(CONFIG['static_obstacles'] + CONFIG['dynamic_obstacles'])) + 1
-        cell_size = world_size / grid_size
-        positions = []
+        # Minimum separation distance between obstacle centers
+        min_separation = 1.2  # meters
         
-        for i in range(grid_size):
-            for j in range(grid_size):
-                x = -half_world + (i + 0.5) * cell_size
-                y = -half_world + (j + 0.5) * cell_size
-                positions.append((x, y))
+        def check_collision_with_existing(new_pos, new_size, existing_obstacles):
+            """Check if a new obstacle would overlap with existing ones"""
+            for obs in existing_obstacles:
+                obs_pos = np.array(obs['pos'][:2])  # Only x,y coordinates
+                distance = np.linalg.norm(np.array(new_pos[:2]) - obs_pos)
+                
+                # Calculate required separation based on obstacle sizes
+                if obs['shape'] == 'box':
+                    obs_radius = max(obs['size'][:2])  # Use max dimension as radius
+                elif obs['shape'] == 'cylinder':
+                    obs_radius = obs['size'][0]  # Cylinder radius
+                else:
+                    obs_radius = obs['size'][0]  # Sphere radius
+                
+                if isinstance(new_size, list) and len(new_size) >= 2:
+                    new_radius = max(new_size[:2])  # For box or cylinder
+                else:
+                    new_radius = new_size  # For sphere
+                
+                required_separation = obs_radius + new_radius + min_separation
+                
+                if distance < required_separation:
+                    return True
+            return False
         
-        # Shuffle positions for random assignment
-        random.shuffle(positions)
+        def is_near_start_or_goal(pos):
+            """Check if position is too close to start or goal"""
+            start_dist = np.linalg.norm(np.array(pos[:2]) - np.array(CONFIG['start_pos'][:2]))
+            goal_dist = np.linalg.norm(np.array(pos[:2]) - np.array(CONFIG['goal_pos'][:2]))
+            return start_dist < 2.0 or goal_dist < 2.0
         
-        # Generate static obstacles
+        # Generate static obstacles with random placement
         for i in range(CONFIG['static_obstacles']):
-            x, y = positions[i]
+            attempts = 0
+            max_attempts = 100
             
-            # Random size and shape
-            size_x = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
-            size_y = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
-            height = CONFIG['obstacle_height']
+            while attempts < max_attempts:
+                # Random position within world bounds
+                x = random.uniform(-half_world + 1, half_world - 1)
+                y = random.uniform(-half_world + 1, half_world - 1)
+                pos = [x, y, CONFIG['obstacle_height']/2]
+                
+                # Skip if too close to start/goal
+                if is_near_start_or_goal(pos):
+                    attempts += 1
+                    continue
+                
+                # Random size and shape
+                size_x = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
+                size_y = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
+                height = CONFIG['obstacle_height']
+                
+                obstacle_type = random.choice(['box', 'cylinder'])
+                size = [size_x, size_y, height/2] if obstacle_type == 'box' else [min(size_x, size_y), height/2]
+                
+                # Check for collisions with existing obstacles
+                if not check_collision_with_existing(pos, size, obstacles):
+                    color = [random.uniform(0.1, 0.9) for _ in range(3)] + [1.0]
+                    
+                    obstacles.append({
+                        'type': 'static',
+                        'shape': obstacle_type,
+                        'pos': pos,
+                        'size': size,
+                        'color': color,
+                        'id': f'static_obs_{i}'
+                    })
+                    break
+                
+                attempts += 1
             
-            obstacle_type = random.choice(['box', 'cylinder'])
-            color = [random.uniform(0.1, 0.9) for _ in range(3)] + [1.0]
-            
-            obstacles.append({
-                'type': 'static',
-                'shape': obstacle_type,
-                'pos': [x, y, height/2],
-                'size': [size_x, size_y, height/2] if obstacle_type == 'box' else [min(size_x, size_y), height/2],
-                'color': color,
-                'id': f'static_obs_{i}'
-            })
-        
-        # Generate dynamic obstacles
-        for i in range(CONFIG['dynamic_obstacles']):
-            idx = CONFIG['static_obstacles'] + i
-            x, y = positions[idx]
-            
-            size = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
-            height = CONFIG['obstacle_height']
-            
-            # Random movement direction
-            direction = random.uniform(0, 2 * math.pi)
-            velocity = [CONFIG['dynamic_speed'] * math.cos(direction), 
-                       CONFIG['dynamic_speed'] * math.sin(direction)]
-            
-            obstacles.append({
-                'type': 'dynamic',
-                'shape': 'sphere',
-                'pos': [x, y, height/2],
-                'size': [size/2],  # radius for sphere
-                'color': [0.9, 0.1, 0.1, 0.8],  # Red for dynamic
-                'velocity': velocity,
-                'bounds': [-world_size/2 + 1, world_size/2 - 1],
-                'id': f'dynamic_obs_{i}'
-            })
+            # If we couldn't place after max attempts, place it anyway but warn
+            if attempts >= max_attempts:
+                print(f"Warning: Could not find non-overlapping position for obstacle {i}")
         
         return obstacles
     
