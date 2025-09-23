@@ -7,11 +7,11 @@ import random
 
 # Configuration from uav_render.py, adapted for the environment
 CONFIG = {
-    'start_pos': np.array([-4.0, -4.0, 1.8]),
-    'goal_pos': np.array([4.0, 4.0, 1.8]),
+    'start_pos': np.array([-4.0, -4.0, 1.0]),
+    'goal_pos': np.array([4.0, 4.0, 1.0]),
     'world_size': 8.0,
     'obstacle_height': 2.0,
-    'uav_flight_height': 1.8,
+    'uav_flight_height': 1.0,  # Half of obstacle height
     'static_obstacles': 8,
     'min_obstacle_size': 0.2,
     'max_obstacle_size': 0.6,
@@ -121,29 +121,52 @@ class UAVEnv(gym.Env):
         obs_dim = 3 + 3 + 3 + CONFIG['lidar_num_rays']
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         
-        # Action space: 4 motor controls
-        self.action_space = spaces.Box(low=1.0, high=10.0, shape=(4,), dtype=np.float32)
+        # Action space: 3D velocity control (vx, vy, vz=0) - no Z-axis movement
+        self.action_space = spaces.Box(low=-2.0, high=2.0, shape=(3,), dtype=np.float32)
         
         self.viewer = None
         self.step_count = 0
 
     def step(self, action):
-        self.data.ctrl[:] = action
+        # Action is now 3D: [vx, vy, vz] but we ignore vz and keep constant height
+        # Convert action to numpy array if it's a tensor
+        if hasattr(action, 'numpy'):
+            action = action.numpy()
+        action = np.array(action).flatten()
+        
+        # Apply velocity control with constant height
+        self.data.qvel[0] = float(action[0])  # X velocity
+        self.data.qvel[1] = float(action[1])  # Y velocity  
+        self.data.qvel[2] = 0.0               # Z velocity = 0 (no vertical movement)
+        
+        # Maintain constant height
+        self.data.qpos[2] = CONFIG['uav_flight_height']
+        
         mujoco.mj_step(self.model, self.data)
         self.step_count += 1
 
-        # Enforce velocity constraints
-        vel = self.data.qvel[:3]
-        speed = np.linalg.norm(vel)
-        if speed < 0.5:
-            self.data.qvel[:3] = (vel / speed) * 0.5 if speed > 0 else np.zeros(3)
-        elif speed > 1.5:
-            self.data.qvel[:3] = (vel / speed) * 1.5
+        # Enforce horizontal velocity constraints only
+        vel_xy = self.data.qvel[:2]
+        speed_xy = np.linalg.norm(vel_xy)
+        if speed_xy < 0.3:
+            self.data.qvel[:2] = (vel_xy / speed_xy) * 0.3 if speed_xy > 0 else np.zeros(2)
+        elif speed_xy > 2.0:
+            self.data.qvel[:2] = (vel_xy / speed_xy) * 2.0
+        
+        # Always ensure Z position stays constant
+        self.data.qpos[2] = CONFIG['uav_flight_height']
+        self.data.qvel[2] = 0.0
         
         obs = self._get_obs()
-        reward = self._get_reward(obs)
-        terminated = self._is_terminated(obs)
+        reward, termination_info = self._get_reward_and_termination_info(obs)
+        terminated = termination_info['terminated']
         truncated = self.step_count >= CONFIG['max_steps']
+        
+        # Store termination info for logging
+        self.last_termination_info = termination_info
+        if truncated and not terminated:
+            self.last_termination_info['termination_reason'] = 'max_steps_reached'
+            self.last_termination_info['terminated'] = True
         
         if self.render_mode == "human":
             self.render()
@@ -154,16 +177,30 @@ class UAVEnv(gym.Env):
         super().reset(seed=seed)
         self.step_count = 0
         
-        # Reset UAV position and state
+        # Reset UAV position and state with constant height
         self.data.qpos[:3] = CONFIG['start_pos']
+        self.data.qpos[2] = CONFIG['uav_flight_height']  # Ensure constant height
         self.data.qvel[:] = 0
-        self.data.ctrl[:] = 0
+        
+        # Initialize termination info
+        self.last_termination_info = {
+            'terminated': False,
+            'termination_reason': 'none',
+            'final_position': None,
+            'goal_distance': None,
+            'collision_detected': False,
+            'out_of_bounds': False
+        }
         
         # Regenerate obstacles for each episode
         self.obstacles = EnvironmentGenerator.generate_obstacles()
         EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
+        
+        # Set initial position again after model reload
+        self.data.qpos[:3] = CONFIG['start_pos']
+        self.data.qpos[2] = CONFIG['uav_flight_height']
         
         return self._get_obs(), {}
 
@@ -281,49 +318,67 @@ class UAVEnv(gym.Env):
         
         return min_dist
 
-    def _get_reward(self, obs):
+    def _get_reward_and_termination_info(self, obs):
         pos = obs[:3]
         vel = obs[3:6]
         goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
         
+        # Initialize termination info
+        termination_info = {
+            'terminated': False,
+            'termination_reason': 'none',
+            'final_position': pos.copy(),
+            'goal_distance': goal_dist,
+            'collision_detected': False,
+            'out_of_bounds': False,
+            'episode_length': self.step_count,
+            'final_velocity': np.linalg.norm(vel[:2])  # Only horizontal velocity
+        }
+        
         # Survival bonus
-        reward = CONFIG.get('step_reward', 0.0)
+        reward = CONFIG.get('step_reward', 0.01)
         
         # Check if UAV is out of bounds
         if self._check_out_of_bounds(pos):
             reward = CONFIG['boundary_penalty']  # -10 penalty
-            return reward
+            termination_info['terminated'] = True
+            termination_info['termination_reason'] = 'out_of_bounds'
+            termination_info['out_of_bounds'] = True
+            return reward, termination_info
         
-        # Reward for moving towards the goal (stronger incentive)
-        if np.dot(vel, (CONFIG['goal_pos'] - pos)) > 0:
-            reward += 0.2
-
-        # Penalty for collision with obstacles
+        # Check for collision with obstacles
         if self._check_collision(pos):
             reward = -100
+            termination_info['terminated'] = True
+            termination_info['termination_reason'] = 'collision'
+            termination_info['collision_detected'] = True
+            return reward, termination_info
             
-        # Reward for reaching the goal
+        # Check if goal is reached
         if goal_dist < 0.5:
             reward = 100
-            
-        return reward
-
-    def _is_terminated(self, obs):
-        pos = obs[:3]
-        goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
+            termination_info['terminated'] = True
+            termination_info['termination_reason'] = 'goal_reached'
+            return reward, termination_info
         
-        # Terminate if out of bounds, collision, or goal reached
-        return (self._check_out_of_bounds(pos) or 
-                self._check_collision(pos) or 
-                goal_dist < 0.5)
+        # Reward for moving towards the goal (only horizontal movement)
+        goal_direction = (CONFIG['goal_pos'] - pos)[:2]  # Only X,Y components
+        vel_horizontal = vel[:2]
+        if np.dot(vel_horizontal, goal_direction) > 0:
+            reward += 0.1 * np.dot(vel_horizontal, goal_direction) / np.linalg.norm(goal_direction)
+
+        # Distance-based reward (closer to goal = higher reward)
+        reward += max(0, (8.0 - goal_dist) / 80.0)  # Scale to small positive value
+            
+        return reward, termination_info
 
     def _check_out_of_bounds(self, pos):
         """Check if UAV position is outside the world boundaries"""
         half_world = CONFIG['world_size'] / 2
         return (abs(pos[0]) > half_world or 
                 abs(pos[1]) > half_world or 
-                pos[2] < 0.1 or  # Below ground
-                pos[2] > 5.0)    # Too high
+                pos[2] < 0.5 or   # Too low (but shouldn't happen with constant height)
+                pos[2] > 1.5)     # Too high (but shouldn't happen with constant height)
 
     def _check_collision(self, uav_pos):
         for obs in self.obstacles:
