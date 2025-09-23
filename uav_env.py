@@ -21,6 +21,7 @@ CONFIG = {
     'boundary_penalty': -10,  # Penalty for going out of bounds
     'lidar_range': 3.0,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
+    'step_reward': 0.01,    # Survival bonus per timestep
 }
 
 class EnvironmentGenerator:
@@ -285,16 +286,17 @@ class UAVEnv(gym.Env):
         vel = obs[3:6]
         goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
         
-        reward = 0
+        # Survival bonus
+        reward = CONFIG.get('step_reward', 0.0)
         
         # Check if UAV is out of bounds
         if self._check_out_of_bounds(pos):
             reward = CONFIG['boundary_penalty']  # -10 penalty
             return reward
         
-        # Reward for moving towards the goal
+        # Reward for moving towards the goal (stronger incentive)
         if np.dot(vel, (CONFIG['goal_pos'] - pos)) > 0:
-            reward += 0.1
+            reward += 0.2
 
         # Penalty for collision with obstacles
         if self._check_collision(pos):

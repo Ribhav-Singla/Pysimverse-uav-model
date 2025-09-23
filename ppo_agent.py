@@ -8,19 +8,29 @@ class ActorCritic(nn.Module):
         super(ActorCritic, self).__init__()
 
         self.actor = nn.Sequential(
-            nn.Linear(state_dim, 64),
+            nn.Linear(state_dim, 128),
+            nn.LayerNorm(128),
             nn.Tanh(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 128),
+            nn.LayerNorm(128),
             nn.Tanh(),
-            nn.Linear(64, action_dim),
+            nn.Linear(128, 128),
+            nn.LayerNorm(128),
+            nn.Tanh(),
+            nn.Linear(128, action_dim),
         )
 
         self.critic = nn.Sequential(
-            nn.Linear(state_dim, 64),
+            nn.Linear(state_dim, 128),
+            nn.LayerNorm(128),
             nn.Tanh(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 128),
+            nn.LayerNorm(128),
             nn.Tanh(),
-            nn.Linear(64, 1)
+            nn.Linear(128, 128),
+            nn.LayerNorm(128),
+            nn.Tanh(),
+            nn.Linear(128, 1)
         )
         
         self.action_dim = action_dim

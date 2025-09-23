@@ -32,7 +32,7 @@ def main():
     action_std = 0.3            # constant std for action distribution (reduced for more precise actions)
     K_epochs = 10               # update policy for K epochs (reduced for faster updates)
     eps_clip = 0.1              # clip parameter for PPO (reduced for finer control)
-    gamma = 0.99                # discount factor
+    gamma = 0.999               # increased for longer-term planning
 
     lr_actor = 0.0001           # learning rate for actor (reduced to prevent overfitting)
     lr_critic = 0.0005          # learning rate for critic (reduced to prevent overfitting)
@@ -65,8 +65,12 @@ def main():
     pretrained_weights = "D:\\pysimverse\\PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth"
     if os.path.exists(pretrained_weights):
         print("Loading pre-trained weights from:", pretrained_weights)
-        ppo_agent.load(pretrained_weights)
-        print("Pre-trained weights loaded successfully!")
+        try:
+            ppo_agent.load(pretrained_weights)
+            print("Pre-trained weights loaded successfully!")
+        except RuntimeError as e:
+            print(f"WARNING: Could not load weights due to architecture mismatch: {e}")
+            print("Starting training with a new model (expanded architecture)")
     else:
         print(f"WARNING: Could not find weights at {pretrained_weights}")
         print("Training will start with a new model")
@@ -81,9 +85,8 @@ def main():
     action_std_decay_rate = 0.05
     action_std_decay_freq = 500  # episodes
     
-    # training loop
-    start_episode = 4060  # Continue from where previous training left off
-    for i_episode in range(start_episode, max_episodes+1):
+    # training loop (start from episode 1)
+    for i_episode in range(1, max_episodes+1):
         state, _ = env.reset()
         episode_reward = 0
         
