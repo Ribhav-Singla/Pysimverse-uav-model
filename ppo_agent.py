@@ -104,10 +104,10 @@ class PPOAgent:
         rewards = torch.tensor(rewards, dtype=torch.float32)
         rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
 
-        # convert list to tensor
+        # convert list to tensor (using numpy for efficiency)
         old_states = torch.squeeze(torch.tensor(np.array(memory.states), dtype=torch.float32))
         old_actions = torch.squeeze(torch.tensor(np.array(memory.actions), dtype=torch.float32))
-        old_logprobs = torch.squeeze(torch.tensor(memory.logprobs, dtype=torch.float32))
+        old_logprobs = torch.squeeze(torch.tensor(np.array(memory.logprobs), dtype=torch.float32))
 
         # Optimize policy for K epochs
         for _ in range(self.K_epochs):

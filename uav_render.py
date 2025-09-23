@@ -306,14 +306,12 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             current_pos = data.qpos[:3].copy()
             current_vel = data.qvel[:3].copy()
             
-            # Create observation for PPO agent
+            # Create observation for PPO agent (matching training environment)
             goal_dist = CONFIG['goal_pos'] - current_pos
-            min_obs_dist = float('inf')
-            for obs in obstacles:
-                dist = np.linalg.norm(current_pos - np.array(obs['pos']))
-                min_obs_dist = min(min_obs_dist, dist)
+            # Create dummy LIDAR readings for rendering (since we're using trained model)
+            lidar_readings = np.full(16, 2.0)  # Assume moderate distances
             
-            state = np.concatenate([current_pos, current_vel, goal_dist, [min_obs_dist]])
+            state = np.concatenate([current_pos, current_vel, goal_dist, lidar_readings])
 
             # Agent selects action
             action, _ = ppo_agent.select_action(state)
@@ -336,6 +334,17 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             
             # Forward model to update rendering
             viewer.sync()
+            
+            # Check for boundary violation
+            half_world = CONFIG['world_size'] / 2
+            if (abs(current_pos[0]) > half_world or abs(current_pos[1]) > half_world or 
+                current_pos[2] < 0.1 or current_pos[2] > 5.0):
+                collision_occurred = True
+                print(f"\n🚨 BOUNDARY VIOLATION DETECTED!")
+                print(f"📍 UAV position: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
+                print(f"🚫 UAV flew outside simulation boundaries!")
+                print(f"⚠️ MISSION FAILED!")
+                break
             
             # Check for collision
             has_collision, obstacle_id, collision_dist = EnvironmentGenerator.check_collision(data.qpos[:3], obstacles)

@@ -18,6 +18,9 @@ CONFIG = {
     'collision_distance': 0.2,
     'control_dt': 0.05,
     'max_steps': 50000,  # Max steps per episode
+    'boundary_penalty': -10,  # Penalty for going out of bounds
+    'lidar_range': 3.0,  # LIDAR maximum detection range
+    'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
 }
 
 class EnvironmentGenerator:
@@ -113,8 +116,9 @@ class UAVEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
         
-        # Observation space: [pos(3), vel(3), goal_dist(3), closest_obstacle_dist(1)]
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(10,), dtype=np.float32)
+        # Observation space: [pos(3), vel(3), goal_dist(3), lidar_readings(16)]
+        obs_dim = 3 + 3 + 3 + CONFIG['lidar_num_rays']
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         
         # Action space: 4 motor controls
         self.action_space = spaces.Box(low=1.0, high=10.0, shape=(4,), dtype=np.float32)
@@ -177,13 +181,104 @@ class UAVEnv(gym.Env):
         vel = self.data.qvel[:3]
         goal_dist = CONFIG['goal_pos'] - pos
         
-        # Calculate distance to the closest obstacle
-        min_obs_dist = float('inf')
-        for obs in self.obstacles:
-            dist = np.linalg.norm(pos - np.array(obs['pos']))
-            min_obs_dist = min(min_obs_dist, dist)
+        # Get LIDAR readings
+        lidar_readings = self._get_lidar_readings(pos)
             
-        return np.concatenate([pos, vel, goal_dist, [min_obs_dist]])
+        return np.concatenate([pos, vel, goal_dist, lidar_readings])
+
+    def _get_lidar_readings(self, pos):
+        """Generate LIDAR readings in 360 degrees around the UAV"""
+        lidar_readings = []
+        
+        for i in range(CONFIG['lidar_num_rays']):
+            # Calculate ray direction (360 degrees divided by number of rays)
+            angle = (2 * math.pi * i) / CONFIG['lidar_num_rays']
+            ray_dir = np.array([math.cos(angle), math.sin(angle), 0])
+            
+            # Cast ray and find closest obstacle or boundary
+            min_distance = CONFIG['lidar_range']
+            
+            # Check boundary intersection
+            boundary_dist = self._ray_boundary_intersection(pos, ray_dir)
+            if boundary_dist < min_distance:
+                min_distance = boundary_dist
+            
+            # Check obstacle intersections
+            for obs in self.obstacles:
+                obs_dist = self._ray_obstacle_intersection(pos, ray_dir, obs)
+                if obs_dist < min_distance:
+                    min_distance = obs_dist
+            
+            lidar_readings.append(min_distance)
+        
+        return np.array(lidar_readings)
+
+    def _ray_boundary_intersection(self, pos, ray_dir):
+        """Calculate intersection of ray with world boundaries"""
+        half_world = CONFIG['world_size'] / 2
+        min_dist = CONFIG['lidar_range']
+        
+        # Check intersection with each boundary
+        boundaries = [
+            (half_world, np.array([1, 0, 0])),   # +X boundary
+            (-half_world, np.array([-1, 0, 0])), # -X boundary
+            (half_world, np.array([0, 1, 0])),   # +Y boundary
+            (-half_world, np.array([0, -1, 0]))  # -Y boundary
+        ]
+        
+        for boundary_pos, boundary_normal in boundaries:
+            # Ray-plane intersection
+            denominator = np.dot(ray_dir, boundary_normal)
+            if abs(denominator) > 1e-6:  # Ray not parallel to boundary
+                if boundary_normal[0] != 0:  # X boundary
+                    t = (boundary_pos - pos[0]) / ray_dir[0]
+                else:  # Y boundary
+                    t = (boundary_pos - pos[1]) / ray_dir[1]
+                
+                if t > 0:  # Ray goes forward
+                    intersection = pos + t * ray_dir
+                    # Check if intersection is within boundary limits
+                    if (-half_world <= intersection[0] <= half_world and 
+                        -half_world <= intersection[1] <= half_world):
+                        min_dist = min(min_dist, t)
+        
+        return min_dist
+
+    def _ray_obstacle_intersection(self, pos, ray_dir, obstacle):
+        """Calculate intersection of ray with obstacle"""
+        obs_pos = np.array(obstacle['pos'])
+        min_dist = CONFIG['lidar_range']
+        
+        if obstacle['shape'] == 'box':
+            # Simple box intersection (approximate)
+            # Calculate distance to box center and subtract box size
+            to_obs = obs_pos - pos
+            proj_length = np.dot(to_obs, ray_dir)
+            
+            if proj_length > 0:  # Obstacle is in ray direction
+                closest_point = pos + proj_length * ray_dir
+                # Check if ray passes near the obstacle
+                lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])  # Only X,Y
+                
+                if lateral_dist < max(obstacle['size'][0], obstacle['size'][1]):
+                    # Approximate distance to obstacle surface
+                    surface_dist = max(0, proj_length - max(obstacle['size'][0], obstacle['size'][1]))
+                    min_dist = min(min_dist, surface_dist)
+        
+        elif obstacle['shape'] == 'cylinder':
+            # Ray-cylinder intersection (simplified)
+            to_obs = obs_pos - pos
+            proj_length = np.dot(to_obs, ray_dir)
+            
+            if proj_length > 0:  # Obstacle is in ray direction
+                closest_point = pos + proj_length * ray_dir
+                lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])  # Only X,Y
+                
+                if lateral_dist < obstacle['size'][0]:  # Within cylinder radius
+                    surface_dist = max(0, proj_length - obstacle['size'][0])
+                    min_dist = min(min_dist, surface_dist)
+        
+        return min_dist
 
     def _get_reward(self, obs):
         pos = obs[:3]
@@ -191,11 +286,17 @@ class UAVEnv(gym.Env):
         goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
         
         reward = 0
+        
+        # Check if UAV is out of bounds
+        if self._check_out_of_bounds(pos):
+            reward = CONFIG['boundary_penalty']  # -10 penalty
+            return reward
+        
         # Reward for moving towards the goal
         if np.dot(vel, (CONFIG['goal_pos'] - pos)) > 0:
             reward += 0.1
 
-        # Penalty for collision
+        # Penalty for collision with obstacles
         if self._check_collision(pos):
             reward = -100
             
@@ -209,7 +310,18 @@ class UAVEnv(gym.Env):
         pos = obs[:3]
         goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
         
-        return self._check_collision(pos) or goal_dist < 0.5
+        # Terminate if out of bounds, collision, or goal reached
+        return (self._check_out_of_bounds(pos) or 
+                self._check_collision(pos) or 
+                goal_dist < 0.5)
+
+    def _check_out_of_bounds(self, pos):
+        """Check if UAV position is outside the world boundaries"""
+        half_world = CONFIG['world_size'] / 2
+        return (abs(pos[0]) > half_world or 
+                abs(pos[1]) > half_world or 
+                pos[2] < 0.1 or  # Below ground
+                pos[2] > 5.0)    # Too high
 
     def _check_collision(self, uav_pos):
         for obs in self.obstacles:

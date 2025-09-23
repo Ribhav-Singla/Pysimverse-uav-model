@@ -24,18 +24,18 @@ def main():
     env_name = "UAVEnv"
     render = False
     solved_reward = 300         # stop training if avg_reward > solved_reward
-    log_interval = 4          # print avg reward in the interval
-    max_episodes = 50       # max training episodes
-    max_timesteps = 5000        # max timesteps in one episode
+    log_interval = 5          # print avg reward in the interval
+    max_episodes = 10000      # max training episodes (increased for better learning)
+    max_timesteps = 50000        # max timesteps in one episode
 
-    update_timestep = 4000      # update policy every n timesteps
-    action_std = 0.6            # constant std for action distribution (Multivariate Normal)
-    K_epochs = 80               # update policy for K epochs
-    eps_clip = 0.2              # clip parameter for PPO
+    update_timestep = 2048      # update policy every n timesteps (reduced for more frequent updates)
+    action_std = 0.3            # constant std for action distribution (reduced for more precise actions)
+    K_epochs = 10               # update policy for K epochs (reduced for faster updates)
+    eps_clip = 0.1              # clip parameter for PPO (reduced for finer control)
     gamma = 0.99                # discount factor
 
-    lr_actor = 0.0003           # learning rate for actor
-    lr_critic = 0.001           # learning rate for critic
+    lr_actor = 0.0001           # learning rate for actor (reduced to prevent overfitting)
+    lr_critic = 0.0005          # learning rate for critic (reduced to prevent overfitting)
 
     random_seed = 0
     #############################################
@@ -54,21 +54,47 @@ def main():
         print("--------------------------------------------------------------------------------------------")
         print("setting random seed to ", random_seed)
         torch.manual_seed(random_seed)
-        env.seed(random_seed)
+        # env.seed(random_seed)  # Not needed for newer gym versions
         np.random.seed(random_seed)
         print("--------------------------------------------------------------------------------------------")
 
     memory = Memory()
     ppo_agent = PPOAgent(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, action_std)
+    
+    # Load pre-trained weights (using absolute path)
+    pretrained_weights = "D:\\pysimverse\\PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth"
+    if os.path.exists(pretrained_weights):
+        print("Loading pre-trained weights from:", pretrained_weights)
+        ppo_agent.load(pretrained_weights)
+        print("Pre-trained weights loaded successfully!")
+    else:
+        print(f"WARNING: Could not find weights at {pretrained_weights}")
+        print("Training will start with a new model")
 
     # logging variables
-    running_reward = 0
-    avg_length = 0
     time_step = 0
-
+    best_reward = -float('inf')
+    
+    # Adaptive action standard deviation decay
+    initial_action_std = action_std
+    min_action_std = 0.1
+    action_std_decay_rate = 0.05
+    action_std_decay_freq = 500  # episodes
+    
     # training loop
-    for i_episode in range(1, max_episodes+1):
+    start_episode = 4060  # Continue from where previous training left off
+    for i_episode in range(start_episode, max_episodes+1):
         state, _ = env.reset()
+        episode_reward = 0
+        
+        # Decay action std for more precise actions as training progresses
+        if i_episode % action_std_decay_freq == 0:
+            new_action_std = max(min_action_std, initial_action_std - 
+                               (initial_action_std - min_action_std) * 
+                               (i_episode / max_episodes))
+            ppo_agent.set_action_std(new_action_std)
+            print(f"Adjusted action std to {new_action_std:.4f}")
+            
         for t in range(max_timesteps):
             time_step +=1
             # Running policy_old:
@@ -90,32 +116,34 @@ def main():
                 ppo_agent.update(memory)
                 memory.clear_memory()
                 time_step = 0
-            running_reward += reward
+            episode_reward += reward
             if render:
                 env.render()
             if done or truncated:
                 break
         
-        avg_length += t
+        episode_length = t + 1
 
-        # stop training if avg_reward > solved_reward
-        if running_reward > (log_interval * solved_reward):
+        # stop training if episode_reward > solved_reward
+        if episode_reward > solved_reward:
             print("########## Solved! ##########")
-            ppo_agent.save(checkpoint_path + 'PPO_{}_{}.pth'.format(env_name, i_episode))
+            # Only save to the specified weights file path
+            ppo_agent.save('D:\\pysimverse\\PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth')
+            print("Model saved to D:\\pysimverse\\PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth")
             break
 
-        # save every 5 episodes
-        if i_episode % 5 == 0:
-            ppo_agent.save(checkpoint_path + 'PPO_{}_{}.pth'.format(env_name, i_episode))
-
-        # logging
+        # Print current episode stats
+        print('Episode {} \t Length: {} \t Reward: {:.1f}'.format(i_episode, episode_length, episode_reward))
+        
+        # Save model periodically and track best performance
         if i_episode % log_interval == 0:
-            avg_length = int(avg_length/log_interval)
-            running_reward = int((running_reward/log_interval))
-
-            print('Episode {} \t Avg length: {} \t Avg reward: {}'.format(i_episode, avg_length, running_reward))
-            running_reward = 0
-            avg_length = 0
+            # Always update the same weights file with the latest model
+            ppo_agent.save('D:\\pysimverse\\PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth')
+            
+            # Only print "New best" message if there's improvement
+            if episode_reward > best_reward:
+                best_reward = episode_reward
+                print(f"✓ New best model saved with reward: {episode_reward:.1f}")
 
 if __name__ == '__main__':
     main()
