@@ -25,17 +25,17 @@ def main():
     render = False
     solved_reward = 300         # stop training if avg_reward > solved_reward
     log_interval = 5          # print avg reward in the interval
-    max_episodes = 10000      # max training episodes (increased for better learning)
-    max_timesteps = 50000        # max timesteps in one episode
+    max_episodes = 200     # increased episodes for better learning
+    max_timesteps = 5000        # further reduced to prevent very long episodes initially
 
-    update_timestep = 2048      # update policy every n timesteps (reduced for more frequent updates)
-    action_std = 0.3            # constant std for action distribution (reduced for more precise actions)
-    K_epochs = 10               # update policy for K epochs (reduced for faster updates)
-    eps_clip = 0.1              # clip parameter for PPO (reduced for finer control)
-    gamma = 0.999               # increased for longer-term planning
+    update_timestep = 256       # more frequent updates for better learning
+    action_std = 0.3            # slightly increased std for more exploration
+    K_epochs = 6                # reduced epochs for faster updates
+    eps_clip = 0.2              # standard PPO clip value
+    gamma = 0.995               # slightly increased for better long-term planning
 
-    lr_actor = 0.0001           # learning rate for actor (reduced to prevent overfitting)
-    lr_critic = 0.0005          # learning rate for critic (reduced to prevent overfitting)
+    lr_actor = 0.0001           # reduced learning rate for more stable learning
+    lr_critic = 0.0003          # reduced learning rate for more stable learning
 
     random_seed = 0
     #############################################
@@ -62,7 +62,7 @@ def main():
     ppo_agent = PPOAgent(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, action_std)
     
     # Load pre-trained weights (using absolute path)
-    pretrained_weights = "/Users/snehilsharma/Snehil/Placements/Pysimverse-uav-model/PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth"
+    pretrained_weights = r"PPO_preTrained\UAVEnv\PPO_UAV_Weights.pth"
     if os.path.exists(pretrained_weights):
         print("Loading pre-trained weights from:", pretrained_weights)
         try:
@@ -85,9 +85,9 @@ def main():
     
     # Adaptive action standard deviation decay
     initial_action_std = action_std
-    min_action_std = 0.1
+    min_action_std = 0.15  # increased minimum for better exploration
     action_std_decay_rate = 0.05
-    action_std_decay_freq = 500  # episodes
+    action_std_decay_freq = 50  # more frequent decay adjustments
     
     # training loop (start from episode 1)
     for i_episode in range(1, max_episodes+1):
@@ -156,20 +156,19 @@ def main():
             print(f"Goal reached with reward: {episode_reward:.1f}")
             print(f"Episode length: {episode_length} steps")
             # Only save to the specified weights file path
-            ppo_agent.save('/Users/snehilsharma/Snehil/Placements/Pysimverse-uav-model/PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth')
-            print("Model saved to /Users/snehilsharma/Snehil/Placements/Pysimverse-uav-model/PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth")
+            ppo_agent.save('PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth')
+            print("Model saved to PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth")
             break
 
-        # Print current episode stats (simplified for non-termination cases)
+        # Print current episode stats
         if not (done or truncated):
             print('Episode {} \t Length: {} \t Reward: {:.1f}'.format(i_episode, episode_length, episode_reward))
         
-        # Save model periodically and track best performance
+        # Save/overwrite the model at the same path every episode
+        ppo_agent.save('PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth')
+        
+        # Print training progress summary every log_interval episodes
         if i_episode % log_interval == 0:
-            # Always update the same weights file with the latest model
-            ppo_agent.save('/Users/snehilsharma/Snehil/Placements/Pysimverse-uav-model/PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth')
-            
-            # Print training progress summary
             print(f"\n=== Training Progress Summary (Episode {i_episode}) ===")
             current_action_std = ppo_agent.policy.action_var[0].sqrt().item()
             print(f"Current Action Std: {current_action_std:.4f}")

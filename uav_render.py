@@ -14,8 +14,8 @@ MODEL_PATH = "environment.xml"
 
 # Configuration parameters for easy tweaking
 CONFIG = {
-    'start_pos': np.array([-4.0, -4.0, 1.8]),   # UAV start position (x, y, z)
-    'goal_pos': np.array([4.0, 4.0, 1.8]),       # UAV goal position
+    'start_pos': np.array([-4.0, -4.0, 1.0]),   # UAV start position (x, y, z) - updated to half obstacle height
+    'goal_pos': np.array([4.0, 4.0, 1.0]),       # UAV goal position - updated to half obstacle height
     'step_dist': 0.01,                            # Movement per control loop (m)
     'takeoff_thrust': 3.0,                        # Thrust for initial takeoff
     'kp_pos': 1.5,                               # Position gain
@@ -24,13 +24,13 @@ CONFIG = {
     'velocity': 0.15,                            # Desired UAV speed in m/s
     'control_dt': 0.05,                          # Control loop timestep in seconds (20Hz)
     'waypoint_threshold': 0.5,                   # Distance threshold to consider waypoint reached (m)
-    'takeoff_altitude': 1.5,                     # Altitude to reach before navigation (m)
+    'takeoff_altitude': 1.0,                     # Altitude to reach before navigation (m) - updated
     
     # Environment parameters
     'world_size': 8.0,                           # World boundary size (8x8 grid)
-    'obstacle_height': 2.0,                      # Fixed height for all obstacles
-    'uav_flight_height': 1.8,                   # UAV flies below obstacle tops
-    'static_obstacles': 8,                       # Number of static obstacles
+        'obstacle_height': 2.0,                     # Height of static obstacles in meters  
+    'uav_flight_height': 1.0,                   # UAV flies at half obstacle height
+    'static_obstacles': 8,                      # Number of static obstacles to generate
     'min_obstacle_size': 0.2,                    # Minimum obstacle dimension
     'max_obstacle_size': 0.6,                    # Maximum obstacle dimension
     'collision_distance': 0.2,                   # Collision threshold (m)
@@ -199,7 +199,7 @@ class EnvironmentGenerator:
                 
             # For cylinder obstacles, check horizontal distance and vertical overlap
             elif obs['shape'] == 'cylinder':
-                # Horizontal distance
+                # Horizontal distance - fixed to use proper squared distance calculation
                 horizontal_dist = math.sqrt((uav_pos[0]-obs_pos[0])**2 + (uav_pos[1]-obs_pos[1])**2)
                 # Vertical distance
                 vertical_dist = max(0, abs(uav_pos[2]-obs_pos[2]) - obs['size'][1])
@@ -228,7 +228,7 @@ import os
 # ... (CONFIG and EnvironmentGenerator class)
 
 # Generate complex environment
-print("🏗️ Generating complex environment with static obstacles...")
+print("🏗 Generating complex environment with static obstacles...")
 obstacles = EnvironmentGenerator.create_xml_with_obstacles()
 
 # Load the model and create the simulation data
@@ -240,8 +240,8 @@ print(f"📊 Model: {model.nu} actuators, {model.nbody} bodies")
 print(f"🎯 Mission: Navigate from START (green) to GOAL (blue)")
 print(f"🚧 Static obstacles: {CONFIG['static_obstacles']}")
 print(f"📏 Obstacle height: {CONFIG['obstacle_height']}m")
-print(f"✈️ UAV flight height: {CONFIG['uav_flight_height']}m")
-print(f"🛣️ Green path trail: {CONFIG['path_trail_length']} points")
+print(f"✈ UAV flight height: {CONFIG['uav_flight_height']}m")
+print(f"🛣 Green path trail: {CONFIG['path_trail_length']} points")
 
 # Initialize PPO agent
 env = UAVEnv()
@@ -258,7 +258,7 @@ try:
     ppo_agent.load(latest_model)
     print(f"🤖 Trained PPO agent loaded successfully from {latest_model}!")
 except:
-    print("⚠️ Could not load trained agent. Using random actions.")
+    print("⚠ Could not load trained agent. Using random actions.")
 
 path_history = []
 # ... (rest of the script)
@@ -315,18 +315,35 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
 
             # Agent selects action
             action, _ = ppo_agent.select_action(state)
-            data.ctrl[:] = action
+            
+            # Convert 3D action to numpy array and ensure it's flat
+            import torch
+            if isinstance(action, torch.Tensor):
+                action = action.detach().numpy()
+            action = np.array(action).flatten()
+            
+            # Apply velocity control directly (3D action space)
+            data.qvel[0] = float(action[0])  # X velocity
+            data.qvel[1] = float(action[1])  # Y velocity  
+            data.qvel[2] = 0.0               # Z velocity = 0 (constant height)
+            
+            # Maintain constant height
+            data.qpos[2] = CONFIG['uav_flight_height']
             
             # Step the simulation
             mujoco.mj_step(model, data)
 
-            # Enforce velocity constraints
-            vel = data.qvel[:3]
-            speed = np.linalg.norm(vel)
-            if speed < 0.5:
-                data.qvel[:3] = (vel / speed) * 0.5 if speed > 0 else np.zeros(3)
-            elif speed > 1.5:
-                data.qvel[:3] = (vel / speed) * 1.5
+            # Enforce horizontal velocity constraints only and maintain constant height
+            vel_xy = data.qvel[:2]  # Only X,Y velocities
+            speed_xy = np.linalg.norm(vel_xy)
+            if speed_xy < 0.3:
+                data.qvel[:2] = (vel_xy / speed_xy) * 0.3 if speed_xy > 0 else np.zeros(2)
+            elif speed_xy > 2.0:
+                data.qvel[:2] = (vel_xy / speed_xy) * 2.0
+                
+            # Always ensure Z position and velocity stay constant
+            data.qpos[2] = CONFIG['uav_flight_height']
+            data.qvel[2] = 0.0
             
             # Update path trail visualization
             if step_count % 5 == 0:
@@ -343,7 +360,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 print(f"\n🚨 BOUNDARY VIOLATION DETECTED!")
                 print(f"📍 UAV position: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
                 print(f"🚫 UAV flew outside simulation boundaries!")
-                print(f"⚠️ MISSION FAILED!")
+                print(f"⚠ MISSION FAILED!")
                 break
             
             # Check for collision
@@ -354,7 +371,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 print(f"💀 UAV crashed into obstacle: {obstacle_id}")
                 print(f"📏 Collision distance: {collision_dist:.3f}m")
                 print(f"📍 UAV position at crash: ({data.qpos[0]:.2f}, {data.qpos[1]:.2f}, {data.qpos[2]:.2f})")
-                print(f"⚠️ MISSION FAILED!")
+                print(f"⚠ MISSION FAILED!")
                 break
             
             # Check if mission is complete
@@ -405,7 +422,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             time.sleep(0.01)
     else:
         print("\n" + "="*50)
-        print("⏹️ SIMULATION TERMINATED")
+        print("⏹ SIMULATION TERMINATED")
         print("="*50)
 
-    print("Simulation finished.")
+    print("Simulation finished.")

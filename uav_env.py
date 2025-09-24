@@ -15,7 +15,7 @@ CONFIG = {
     'static_obstacles': 8,
     'min_obstacle_size': 0.2,
     'max_obstacle_size': 0.6,
-    'collision_distance': 0.2,
+    'collision_distance': 0.15,  # Slightly reduced for more forgiving collisions
     'control_dt': 0.05,
     'max_steps': 50000,  # Max steps per episode
     'boundary_penalty': -10,  # Penalty for going out of bounds
@@ -31,20 +31,25 @@ class EnvironmentGenerator:
         world_size = CONFIG['world_size']
         half_world = world_size / 2
         
-        grid_size = int(math.sqrt(CONFIG['static_obstacles'])) + 1
-        cell_size = world_size / grid_size
-        positions = []
+        # Randomize number of obstacles for each episode (between 4 and 12)
+        num_obstacles = random.randint(4, 12)
         
-        for i in range(grid_size):
-            for j in range(grid_size):
-                x = -half_world + (i + 0.5) * cell_size
-                y = -half_world + (j + 0.5) * cell_size
-                positions.append((x, y))
-        
-        random.shuffle(positions)
-        
-        for i in range(CONFIG['static_obstacles']):
-            x, y = positions[i]
+        for i in range(num_obstacles):
+            # Generate completely random positions within the world boundaries
+            # Keep obstacles away from start and goal positions
+            x = random.uniform(-half_world + 1, half_world - 1)
+            y = random.uniform(-half_world + 1, half_world - 1)
+            
+            # Ensure obstacles don't spawn too close to start or goal positions
+            start_pos = CONFIG['start_pos'][:2]  # Only X,Y
+            goal_pos = CONFIG['goal_pos'][:2]    # Only X,Y
+            min_distance_from_points = 1.5
+            
+            # Regenerate position if too close to start or goal
+            while (np.linalg.norm([x, y] - start_pos) < min_distance_from_points or 
+                   np.linalg.norm([x, y] - goal_pos) < min_distance_from_points):
+                x = random.uniform(-half_world + 1, half_world - 1)
+                y = random.uniform(-half_world + 1, half_world - 1)
             
             size_x = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
             size_y = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
@@ -65,7 +70,8 @@ class EnvironmentGenerator:
         return obstacles
 
     @staticmethod
-    def create_xml_with_obstacles(obstacles):
+    def create_xml_content(obstacles):
+        """Create XML content string for given obstacles (optimized version)"""
         xml_template = f'''<mujoco model="uav_env">
   <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
   <option integrator="RK4" timestep="0.01"/>
@@ -101,8 +107,14 @@ class EnvironmentGenerator:
     <motor name="m4" gear="0 0 1 0 0 0" site="motor4"/>
   </actuator>
 </mujoco>'''
+        return xml_template
+
+    @staticmethod
+    def create_xml_with_obstacles(obstacles):
+        """Legacy method for backward compatibility"""
+        xml_content = EnvironmentGenerator.create_xml_content(obstacles)
         with open("environment.xml", 'w') as f:
-            f.write(xml_template)
+            f.write(xml_content)
         return obstacles
 
 class UAVEnv(gym.Env):
@@ -111,8 +123,32 @@ class UAVEnv(gym.Env):
     def __init__(self, render_mode=None):
         super().__init__()
         self.render_mode = render_mode
-        self.obstacles = EnvironmentGenerator.generate_obstacles()
-        EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+        
+        # Pre-generate multiple environment configurations for fast switching
+        self.num_env_configs = 20  # Number of pre-generated environments
+        self.env_configs = []
+        self.current_env_idx = 0
+        
+        print(f"🏗️ Pre-generating {self.num_env_configs} environment configurations...")
+        
+        # Generate multiple obstacle configurations and store them
+        for i in range(self.num_env_configs):
+            obstacles = EnvironmentGenerator.generate_obstacles()
+            xml_content = EnvironmentGenerator.create_xml_content(obstacles)
+            self.env_configs.append({
+                'obstacles': obstacles,
+                'xml_content': xml_content,
+                'num_obstacles': len(obstacles)
+            })
+        
+        print(f"✅ Environment configurations ready!")
+        
+        # Initialize with first configuration
+        self.obstacles = self.env_configs[0]['obstacles']
+        
+        # Create initial model from first configuration
+        with open("environment.xml", 'w') as f:
+            f.write(self.env_configs[0]['xml_content'])
         
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
@@ -126,6 +162,21 @@ class UAVEnv(gym.Env):
         
         self.viewer = None
         self.step_count = 0
+        self.episode_count = 0  # Track episodes for periodic regeneration
+
+    def _regenerate_env_pool(self):
+        """Regenerate environment pool periodically for more variety"""
+        print(f"🔄 Regenerating environment pool for fresh variety...")
+        self.env_configs = []
+        for i in range(self.num_env_configs):
+            obstacles = EnvironmentGenerator.generate_obstacles()
+            xml_content = EnvironmentGenerator.create_xml_content(obstacles)
+            self.env_configs.append({
+                'obstacles': obstacles,
+                'xml_content': xml_content,
+                'num_obstacles': len(obstacles)
+            })
+        print(f"✅ Environment pool regenerated!")
 
     def step(self, action):
         # Action is now 3D: [vx, vy, vz] but we ignore vz and keep constant height
@@ -133,6 +184,9 @@ class UAVEnv(gym.Env):
         if hasattr(action, 'numpy'):
             action = action.numpy()
         action = np.array(action).flatten()
+        
+        # Clip actions to reasonable velocity limits
+        action = np.clip(action, -2.0, 2.0)
         
         # Apply velocity control with constant height
         self.data.qvel[0] = float(action[0])  # X velocity
@@ -142,8 +196,25 @@ class UAVEnv(gym.Env):
         # Maintain constant height
         self.data.qpos[2] = CONFIG['uav_flight_height']
         
+        # Store current position before step
+        prev_pos = self.data.qpos[:3].copy()
+        
         mujoco.mj_step(self.model, self.data)
         self.step_count += 1
+
+        # Enforce boundary constraints by clamping position
+        half_world = CONFIG['world_size'] / 2
+        boundary_margin = 0.1  # Small margin to prevent exact boundary touching
+        
+        # Clamp X and Y positions to stay within bounds
+        self.data.qpos[0] = np.clip(self.data.qpos[0], -half_world + boundary_margin, half_world - boundary_margin)
+        self.data.qpos[1] = np.clip(self.data.qpos[1], -half_world + boundary_margin, half_world - boundary_margin)
+        
+        # If position was clamped, also reduce velocity in that direction
+        if abs(self.data.qpos[0]) >= half_world - boundary_margin:
+            self.data.qvel[0] = 0.0  # Stop X velocity when hitting X boundary
+        if abs(self.data.qpos[1]) >= half_world - boundary_margin:
+            self.data.qvel[1] = 0.0  # Stop Y velocity when hitting Y boundary
 
         # Enforce horizontal velocity constraints only
         vel_xy = self.data.qvel[:2]
@@ -176,6 +247,11 @@ class UAVEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.step_count = 0
+        self.episode_count += 1
+        
+        # Regenerate environment pool every 100 episodes for variety
+        if self.episode_count % 100 == 0:
+            self._regenerate_env_pool()
         
         # Reset UAV position and state with constant height
         self.data.qpos[:3] = CONFIG['start_pos']
@@ -192,10 +268,19 @@ class UAVEnv(gym.Env):
             'out_of_bounds': False
         }
         
-        # Regenerate obstacles for each episode
-        self.obstacles = EnvironmentGenerator.generate_obstacles()
-        EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
-        self.model = mujoco.MjModel.from_xml_path("environment.xml")
+        # Initialize distance tracking for reward calculation
+        initial_pos = CONFIG['start_pos']
+        self.previous_goal_distance = np.linalg.norm(CONFIG['goal_pos'] - initial_pos)
+        
+        # Switch to next pre-generated environment configuration (ultra-fast!)
+        self.current_env_idx = (self.current_env_idx + 1) % self.num_env_configs
+        current_config = self.env_configs[self.current_env_idx]
+        
+        self.obstacles = current_config['obstacles']
+        print(f"🏗️ Using pre-generated config {self.current_env_idx+1}/{self.num_env_configs} with {current_config['num_obstacles']} obstacles")
+        
+        # Load model directly from XML string (no file I/O - fastest!)
+        self.model = mujoco.MjModel.from_xml_string(current_config['xml_content'])
         self.data = mujoco.MjData(self.model)
         
         # Set initial position again after model reload
@@ -348,7 +433,8 @@ class UAVEnv(gym.Env):
         
         # Check for collision with obstacles
         if self._check_collision(pos):
-            reward = -100
+            # Reduced collision penalty to encourage learning
+            reward = -20  # Reduced from -100 to -20
             termination_info['terminated'] = True
             termination_info['termination_reason'] = 'collision'
             termination_info['collision_detected'] = True
@@ -361,14 +447,89 @@ class UAVEnv(gym.Env):
             termination_info['termination_reason'] = 'goal_reached'
             return reward, termination_info
         
-        # Reward for moving towards the goal (only horizontal movement)
+        # Survival reward - encourage longer episodes
+        reward += 0.02  # Small positive reward for each step
+        
+        # Reward 0.1 for every step that reduces distance to goal
+        distance_reduction = self.previous_goal_distance - goal_dist
+        if distance_reduction > 0:
+            reward += 0.1  # Fixed reward for any distance reduction
+        
+        # Update previous distance for next step
+        self.previous_goal_distance = goal_dist
+        
+        # Additional reward for moving towards the goal (only horizontal movement)
         goal_direction = (CONFIG['goal_pos'] - pos)[:2]  # Only X,Y components
         vel_horizontal = vel[:2]
         if np.dot(vel_horizontal, goal_direction) > 0:
-            reward += 0.1 * np.dot(vel_horizontal, goal_direction) / np.linalg.norm(goal_direction)
+            reward += 0.05 * np.dot(vel_horizontal, goal_direction) / np.linalg.norm(goal_direction)
 
         # Distance-based reward (closer to goal = higher reward)
         reward += max(0, (8.0 - goal_dist) / 80.0)  # Scale to small positive value
+        
+        # LIDAR-based obstacle avoidance rewards
+        lidar_readings = obs[9:]  # LIDAR readings are the last 16 values
+        min_obstacle_distance = np.min(lidar_readings)
+        
+        # Graduated penalty system based on obstacle proximity
+        if min_obstacle_distance < 0.3:  # Very close to obstacle
+            reward -= 0.5  # Strong penalty
+        elif min_obstacle_distance < 0.6:  # Close to obstacle
+            reward -= 0.2  # Medium penalty
+        elif min_obstacle_distance < 1.0:  # Near obstacle
+            reward -= 0.1  # Small penalty
+        else:
+            reward += 0.01  # Small bonus for maintaining distance
+        
+        # Penalty for getting too close to boundaries
+        half_world = CONFIG['world_size'] / 2
+        boundary_buffer = 1.0  # Start penalizing within 1m of boundary
+        
+        # Calculate distance to nearest boundary
+        min_boundary_dist = min(
+            half_world - abs(pos[0]),  # Distance to X boundaries
+            half_world - abs(pos[1])   # Distance to Y boundaries
+        )
+        
+        # Apply penalty if too close to boundary
+        if min_boundary_dist < boundary_buffer:
+            boundary_penalty = -0.5 * (boundary_buffer - min_boundary_dist) / boundary_buffer
+            reward += boundary_penalty
+        
+        # LIDAR-based obstacle avoidance reward
+        lidar_readings = obs[9:]  # LIDAR readings are the last 16 values in observation
+        
+        # Penalty for getting too close to obstacles detected by LIDAR
+        min_obstacle_distance = np.min(lidar_readings)
+        safe_distance = 0.5  # Minimum safe distance from obstacles
+        
+        if min_obstacle_distance < safe_distance:
+            # Strong penalty for being too close to obstacles
+            obstacle_penalty = -1.0 * (safe_distance - min_obstacle_distance) / safe_distance
+            reward += obstacle_penalty
+        
+        # Reward for maintaining safe distance from obstacles while moving toward goal
+        if min_obstacle_distance > safe_distance:
+            # Small bonus for maintaining safe distance
+            reward += 0.02
+        
+        # Directional obstacle avoidance: check if UAV is moving away from closest obstacles
+        if min_obstacle_distance < 1.0:  # Only when obstacles are relatively close
+            # Find the direction of the closest obstacle
+            closest_obstacle_idx = np.argmin(lidar_readings)
+            obstacle_angle = (closest_obstacle_idx * 360.0 / len(lidar_readings)) * np.pi / 180.0
+            
+            # Direction vector to the closest obstacle
+            obstacle_direction = np.array([np.cos(obstacle_angle), np.sin(obstacle_angle)])
+            
+            # Reward for moving away from obstacles (velocity opposite to obstacle direction)
+            vel_horizontal = vel[:2]
+            if np.linalg.norm(vel_horizontal) > 0:
+                vel_normalized = vel_horizontal / np.linalg.norm(vel_horizontal)
+                # Negative dot product means moving away from obstacle (good)
+                avoidance_score = -np.dot(vel_normalized, obstacle_direction)
+                if avoidance_score > 0:
+                    reward += 0.05 * avoidance_score
             
         return reward, termination_info
 
