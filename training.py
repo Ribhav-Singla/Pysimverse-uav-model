@@ -23,7 +23,7 @@ def main():
     ############## Hyperparameters ##############
     env_name = "UAVEnv"
     render = False
-    solved_reward = 300         # stop training if avg_reward > solved_reward
+    solved_reward = 1000         # stop training if avg_reward > solved_reward
     log_interval = 5          # print avg reward in the interval
     max_episodes = 10000      # max training episodes (increased for better learning)
     max_timesteps = 50000        # max timesteps in one episode
@@ -62,7 +62,7 @@ def main():
     ppo_agent = PPOAgent(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, action_std)
     
     # Load pre-trained weights (using absolute path)
-    pretrained_weights = "/Users/snehilsharma/Snehil/Placements/Pysimverse-uav-model/PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth"
+    pretrained_weights = "D:\\Pysimverse-uav-model\\PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth"
     if os.path.exists(pretrained_weights):
         print("Loading pre-trained weights from:", pretrained_weights)
         try:
@@ -156,8 +156,8 @@ def main():
             print(f"Goal reached with reward: {episode_reward:.1f}")
             print(f"Episode length: {episode_length} steps")
             # Only save to the specified weights file path
-            ppo_agent.save('/Users/snehilsharma/Snehil/Placements/Pysimverse-uav-model/PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth')
-            print("Model saved to /Users/snehilsharma/Snehil/Placements/Pysimverse-uav-model/PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth")
+            ppo_agent.save('D:\\Pysimverse-uav-model\\PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth')
+            print("Model saved to D:\\Pysimverse-uav-model\\PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth")
             break
 
         # Print current episode stats (simplified for non-termination cases)
@@ -167,7 +167,7 @@ def main():
         # Save model periodically and track best performance
         if i_episode % log_interval == 0:
             # Always update the same weights file with the latest model
-            ppo_agent.save('/Users/snehilsharma/Snehil/Placements/Pysimverse-uav-model/PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth')
+            ppo_agent.save('D:\\Pysimverse-uav-model\\PPO_preTrained\\UAVEnv\\PPO_UAV_Weights.pth')
             
             # Print training progress summary
             print(f"\n=== Training Progress Summary (Episode {i_episode}) ===")

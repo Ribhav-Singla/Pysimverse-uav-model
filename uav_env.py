@@ -12,10 +12,10 @@ CONFIG = {
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,  # Half of obstacle height
-    'static_obstacles': 8,
-    'min_obstacle_size': 0.2,
-    'max_obstacle_size': 0.6,
-    'collision_distance': 0.2,
+    'static_obstacles': 4,
+    'min_obstacle_size': 0.01,
+    'max_obstacle_size': 0.05,
+    'collision_distance': 0.1,
     'control_dt': 0.05,
     'max_steps': 50000,  # Max steps per episode
     'boundary_penalty': -10,  # Penalty for going out of bounds
@@ -202,6 +202,9 @@ class UAVEnv(gym.Env):
         self.data.qpos[:3] = CONFIG['start_pos']
         self.data.qpos[2] = CONFIG['uav_flight_height']
         
+        # Initialize previous goal distance
+        self.prev_goal_dist = np.linalg.norm(CONFIG['goal_pos'] - self.data.qpos[:3])
+        
         return self._get_obs(), {}
 
     def render(self):
@@ -369,7 +372,19 @@ class UAVEnv(gym.Env):
 
         # Distance-based reward (closer to goal = higher reward)
         reward += max(0, (8.0 - goal_dist) / 80.0)  # Scale to small positive value
+        
+        # --- Relative Reward based on Proximity ---
+        # Reward for making progress towards the goal
+        progress = self.prev_goal_dist - goal_dist
+        progress_reward = 2.0 * progress  # Scale the reward
+        
+        # Increase reward when close to the goal
+        if goal_dist < 1.5:  # Proximity threshold of 1.5m
+            progress_reward *= 1.2
             
+        reward += progress_reward
+        self.prev_goal_dist = goal_dist
+        
         return reward, termination_info
 
     def _check_out_of_bounds(self, pos):

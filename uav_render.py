@@ -21,7 +21,7 @@ CONFIG = {
     'kp_pos': 1.5,                               # Position gain
     'kd_pos': 1.0,                               # Velocity damping gain
     'hover_thrust': 7.0,                         # Base thrust to hover
-    'velocity': 0.15,                            # Desired UAV speed in m/s
+    'velocity': 0.2,                            # Desired UAV speed in m/s
     'control_dt': 0.05,                          # Control loop timestep in seconds (20Hz)
     'waypoint_threshold': 0.5,                   # Distance threshold to consider waypoint reached (m)
     'takeoff_altitude': 1.5,                     # Altitude to reach before navigation (m)
@@ -30,10 +30,10 @@ CONFIG = {
     'world_size': 8.0,                           # World boundary size (8x8 grid)
     'obstacle_height': 2.0,                      # Fixed height for all obstacles
     'uav_flight_height': 1.8,                   # UAV flies below obstacle tops
-    'static_obstacles': 8,                       # Number of static obstacles
-    'min_obstacle_size': 0.2,                    # Minimum obstacle dimension
-    'max_obstacle_size': 0.6,                    # Maximum obstacle dimension
-    'collision_distance': 0.2,                   # Collision threshold (m)
+    'static_obstacles': 4,                       # Number of static obstacles
+    'min_obstacle_size': 0.01,                    # Minimum obstacle dimension
+    'max_obstacle_size': 0.05,                    # Maximum obstacle dimension
+    'collision_distance': 0.1,                   # Collision threshold (m)
     'path_trail_length': 200,                    # Number of points to keep in the path trail
 }
 
@@ -314,8 +314,22 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             state = np.concatenate([current_pos, current_vel, goal_dist, lidar_readings])
 
             # Agent selects action
-            action, _ = ppo_agent.select_action(state)
-            data.ctrl[:] = action
+            raw_action, _ = ppo_agent.select_action(state)
+            action = raw_action.flatten() # Ensure action is a 1D array
+
+            # --- Height Control ---
+            # The agent controls X and Y velocity, but we override Z for stable height.
+            current_height = data.qpos[2]
+            desired_height = CONFIG['uav_flight_height']
+            
+            # Simple P-controller to maintain height
+            height_error = desired_height - current_height
+            vz_correction = CONFIG['kp_pos'] * height_error
+            
+            # Apply velocity control
+            data.qvel[0] = action[0]      # Agent controls X-velocity
+            data.qvel[1] = action[1]      # Agent controls Y-velocity
+            data.qvel[2] = vz_correction  # Height controller manages Z-velocity
             
             # Step the simulation
             mujoco.mj_step(model, data)
