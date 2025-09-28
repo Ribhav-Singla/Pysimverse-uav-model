@@ -1,0 +1,1 @@
+timestamp,episode,step,curriculum_level,map_id,obstacle_count,uav_x,uav_y,uav_z,obstacle_x,obstacle_y,obstacle_z,obstacle_type,obstacle_id,detection_distance,detection_angle,prev_velocity_x,prev_velocity_y,new_velocity_x,new_velocity_y,trajectory_change_angle

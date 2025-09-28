@@ -1,0 +1,1 @@
+timestamp,episode,curriculum_level,episode_in_level,map_id,obstacle_count,episode_reward,episode_length,termination_reason,goal_reached,collision_detected,out_of_bounds,final_position_x,final_position_y,final_position_z,goal_distance,final_velocity
