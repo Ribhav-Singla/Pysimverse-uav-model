@@ -12,14 +12,14 @@ CONFIG = {
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,  # Half of obstacle height
-    'static_obstacles': 4,
-    'min_obstacle_size': 0.01,
-    'max_obstacle_size': 0.05,
+    'static_obstacles': 9,
+    'min_obstacle_size': 0.05,
+    'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
     'control_dt': 0.05,
     'max_steps': 50000,  # Max steps per episode
     'boundary_penalty': -10,  # Penalty for going out of bounds
-    'lidar_range': 3.0,  # LIDAR maximum detection range
+    'lidar_range': 2.8,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
     'step_reward': 0.01,    # Survival bonus per timestep
 }
@@ -379,7 +379,7 @@ class UAVEnv(gym.Env):
         progress_reward = 2.0 * progress  # Scale the reward
         
         # Increase reward when close to the goal
-        if goal_dist < 1.5:  # Proximity threshold of 1.5m
+        if goal_dist < 3:  # Proximity threshold of 3m
             progress_reward *= 1.2
             
         reward += progress_reward

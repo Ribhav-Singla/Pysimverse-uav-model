@@ -12,29 +12,26 @@ from uav_env import UAVEnv, EnvironmentGenerator
 # Define the path to your XML model
 MODEL_PATH = "environment.xml"
 
-# Configuration parameters for easy tweaking
+# Configuration parameters - MUST match training environment
 CONFIG = {
-    'start_pos': np.array([-4.0, -4.0, 1.8]),   # UAV start position (x, y, z)
-    'goal_pos': np.array([4.0, 4.0, 1.8]),       # UAV goal position
-    'step_dist': 0.01,                            # Movement per control loop (m)
-    'takeoff_thrust': 3.0,                        # Thrust for initial takeoff
-    'kp_pos': 1.5,                               # Position gain
-    'kd_pos': 1.0,                               # Velocity damping gain
-    'hover_thrust': 7.0,                         # Base thrust to hover
-    'velocity': 0.2,                            # Desired UAV speed in m/s
-    'control_dt': 0.05,                          # Control loop timestep in seconds (20Hz)
-    'waypoint_threshold': 0.5,                   # Distance threshold to consider waypoint reached (m)
-    'takeoff_altitude': 1.5,                     # Altitude to reach before navigation (m)
+    'start_pos': np.array([-4.0, -4.0, 1.0]),
+    'goal_pos': np.array([4.0, 4.0, 1.0]),
+    'world_size': 8.0,
+    'obstacle_height': 2.0,
+    'uav_flight_height': 1.0,
+    'static_obstacles': 10,
+    'min_obstacle_size': 0.05,
+    'max_obstacle_size': 0.12,
+    'collision_distance': 0.1,
+    'control_dt': 0.05,
+    'boundary_penalty': -10,
+    'lidar_range': 2.75,
+    'lidar_num_rays': 16,
+    'step_reward': 0.01,
     
-    # Environment parameters
-    'world_size': 8.0,                           # World boundary size (8x8 grid)
-    'obstacle_height': 2.0,                      # Fixed height for all obstacles
-    'uav_flight_height': 1.8,                   # UAV flies below obstacle tops
-    'static_obstacles': 4,                       # Number of static obstacles
-    'min_obstacle_size': 0.01,                    # Minimum obstacle dimension
-    'max_obstacle_size': 0.05,                    # Maximum obstacle dimension
-    'collision_distance': 0.1,                   # Collision threshold (m)
-    'path_trail_length': 200,                    # Number of points to keep in the path trail
+    # Render-specific parameters (do not affect agent logic)
+    'kp_pos': 1.5,
+    'path_trail_length': 200,
 }
 
 class EnvironmentGenerator:
@@ -221,6 +218,88 @@ class EnvironmentGenerator:
         
         return False, None, float('inf')
 
+def get_lidar_readings(pos, obstacles):
+    """Generate LIDAR readings in 360 degrees around the UAV - MUST match training"""
+    lidar_readings = []
+    
+    for i in range(CONFIG['lidar_num_rays']):
+        angle = (2 * math.pi * i) / CONFIG['lidar_num_rays']
+        ray_dir = np.array([math.cos(angle), math.sin(angle), 0])
+        
+        min_distance = CONFIG['lidar_range']
+        
+        boundary_dist = ray_boundary_intersection(pos, ray_dir)
+        if boundary_dist < min_distance:
+            min_distance = boundary_dist
+        
+        for obs in obstacles:
+            obs_dist = ray_obstacle_intersection(pos, ray_dir, obs)
+            if obs_dist < min_distance:
+                min_distance = obs_dist
+        
+        lidar_readings.append(min_distance)
+    
+    return np.array(lidar_readings)
+
+def ray_boundary_intersection(pos, ray_dir):
+    """Calculate intersection of ray with world boundaries - MUST match training"""
+    half_world = CONFIG['world_size'] / 2
+    min_dist = CONFIG['lidar_range']
+    
+    boundaries = [
+        (half_world, np.array([1, 0, 0])),
+        (-half_world, np.array([-1, 0, 0])),
+        (half_world, np.array([0, 1, 0])),
+        (-half_world, np.array([0, -1, 0]))
+    ]
+    
+    for boundary_pos, boundary_normal in boundaries:
+        denominator = np.dot(ray_dir, boundary_normal)
+        if abs(denominator) > 1e-6:
+            if boundary_normal[0] != 0:
+                t = (boundary_pos - pos[0]) / ray_dir[0]
+            else:
+                t = (boundary_pos - pos[1]) / ray_dir[1]
+            
+            if t > 0:
+                intersection = pos + t * ray_dir
+                if (-half_world <= intersection[0] <= half_world and 
+                    -half_world <= intersection[1] <= half_world):
+                    min_dist = min(min_dist, t)
+    
+    return min_dist
+
+def ray_obstacle_intersection(pos, ray_dir, obstacle):
+    """Calculate intersection of ray with obstacle - MUST match training"""
+    obs_pos = np.array(obstacle['pos'])
+    min_dist = CONFIG['lidar_range']
+    
+    if obstacle['shape'] == 'box':
+        to_obs = obs_pos - pos
+        proj_length = np.dot(to_obs, ray_dir)
+        
+        if proj_length > 0:
+            closest_point = pos + proj_length * ray_dir
+            lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])
+            
+            if lateral_dist < max(obstacle['size'][0], obstacle['size'][1]):
+                surface_dist = max(0, proj_length - max(obstacle['size'][0], obstacle['size'][1]))
+                min_dist = min(min_dist, surface_dist)
+    
+    elif obstacle['shape'] == 'cylinder':
+        to_obs = obs_pos - pos
+        proj_length = np.dot(to_obs, ray_dir)
+        
+        if proj_length > 0:
+            closest_point = pos + proj_length * ray_dir
+            lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])
+            
+            if lateral_dist < obstacle['size'][0]:
+                surface_dist = max(0, proj_length - obstacle['size'][0])
+                min_dist = min(min_dist, surface_dist)
+    
+    return min_dist
+
 import os
 
 # ... (rest of the imports)
@@ -306,11 +385,9 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             current_pos = data.qpos[:3].copy()
             current_vel = data.qvel[:3].copy()
             
-            # Create observation for PPO agent (matching training environment)
+            # Create observation for PPO agent (MUST match training environment)
             goal_dist = CONFIG['goal_pos'] - current_pos
-            # Create dummy LIDAR readings for rendering (since we're using trained model)
-            lidar_readings = np.full(16, 2.0)  # Assume moderate distances
-            
+            lidar_readings = get_lidar_readings(current_pos, obstacles)
             state = np.concatenate([current_pos, current_vel, goal_dist, lidar_readings])
 
             # Agent selects action

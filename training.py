@@ -24,18 +24,18 @@ def main():
     env_name = "UAVEnv"
     render = False
     solved_reward = 1000         # stop training if avg_reward > solved_reward
-    log_interval = 5          # print avg reward in the interval
+    log_interval = 10          # print avg reward in the interval
     max_episodes = 10000      # max training episodes (increased for better learning)
     max_timesteps = 50000        # max timesteps in one episode
 
     update_timestep = 2048      # update policy every n timesteps (reduced for more frequent updates)
     action_std = 0.3            # constant std for action distribution (reduced for more precise actions)
-    K_epochs = 10               # update policy for K epochs (reduced for faster updates)
+    K_epochs = 12               # update policy for K epochs (reduced for faster updates)
     eps_clip = 0.1              # clip parameter for PPO (reduced for finer control)
     gamma = 0.999               # increased for longer-term planning
 
     lr_actor = 0.0001           # learning rate for actor (reduced to prevent overfitting)
-    lr_critic = 0.0005          # learning rate for critic (reduced to prevent overfitting)
+    lr_critic = 0.0004          # learning rate for critic (reduced to prevent overfitting)
 
     random_seed = 0
     #############################################
