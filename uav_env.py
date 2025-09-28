@@ -4,6 +4,9 @@ import gymnasium as gym
 from gymnasium import spaces
 import math
 import random
+import csv
+import os
+from datetime import datetime
 
 # Configuration from uav_render.py, adapted for the environment
 CONFIG = {
@@ -26,12 +29,17 @@ CONFIG = {
 
 class EnvironmentGenerator:
     @staticmethod
-    def generate_obstacles():
+    def generate_obstacles(num_obstacles=None):
+        """Generate obstacles with specified count for curriculum learning"""
+        if num_obstacles is None:
+            num_obstacles = CONFIG['static_obstacles']
+        
         obstacles = []
         world_size = CONFIG['world_size']
         half_world = world_size / 2
         
-        grid_size = int(math.sqrt(CONFIG['static_obstacles'])) + 1
+        # Generate potential positions with grid-based distribution
+        grid_size = int(math.sqrt(max(num_obstacles, 9))) + 1
         cell_size = world_size / grid_size
         positions = []
         
@@ -43,8 +51,16 @@ class EnvironmentGenerator:
         
         random.shuffle(positions)
         
-        for i in range(CONFIG['static_obstacles']):
-            x, y = positions[i]
+        for i in range(num_obstacles):
+            x, y = positions[i % len(positions)]
+            
+            # Add some randomness to avoid perfect grid alignment
+            x += random.uniform(-cell_size/4, cell_size/4)
+            y += random.uniform(-cell_size/4, cell_size/4)
+            
+            # Ensure obstacles stay within bounds
+            x = max(-half_world + 0.5, min(half_world - 0.5, x))
+            y = max(-half_world + 0.5, min(half_world - 0.5, y))
             
             size_x = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
             size_y = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
@@ -63,6 +79,28 @@ class EnvironmentGenerator:
             })
         
         return obstacles
+
+    @staticmethod
+    def generate_curriculum_maps():
+        """Generate 20 maps each for obstacle counts 1-10"""
+        curriculum_maps = {}
+        
+        for obstacle_count in range(1, 11):  # 1 to 10 obstacles
+            maps = []
+            for map_id in range(20):  # 20 maps per obstacle count
+                # Set random seed for reproducible map generation
+                random.seed(obstacle_count * 100 + map_id)
+                obstacles = EnvironmentGenerator.generate_obstacles(obstacle_count)
+                maps.append({
+                    'obstacles': obstacles,
+                    'obstacle_count': obstacle_count,
+                    'map_id': map_id
+                })
+            curriculum_maps[obstacle_count] = maps
+        
+        # Reset random seed
+        random.seed()
+        return curriculum_maps
 
     @staticmethod
     def create_xml_with_obstacles(obstacles):
@@ -108,11 +146,23 @@ class EnvironmentGenerator:
 class UAVEnv(gym.Env):
     metadata = {'render_modes': ['human'], 'render_fps': 30}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, curriculum_learning=False):
         super().__init__()
         self.render_mode = render_mode
-        self.obstacles = EnvironmentGenerator.generate_obstacles()
-        EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+        self.curriculum_learning = curriculum_learning
+        
+        # Initialize curriculum learning system
+        if self.curriculum_learning:
+            self.curriculum_maps = EnvironmentGenerator.generate_curriculum_maps()
+            self.current_obstacle_level = 1
+            self.current_map_pool = self.curriculum_maps[1]
+            print(f"🎓 Curriculum Learning Initialized: Generated maps for obstacle levels 1-10")
+            print(f"   - 20 maps per obstacle level (200 total maps)")
+            print(f"   - Starting with obstacle level: {self.current_obstacle_level}")
+        
+        # Generate initial obstacles
+        self.obstacles = EnvironmentGenerator.generate_obstacles() if not curriculum_learning else []
+        self.load_curriculum_map() if curriculum_learning else EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
         
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
@@ -126,8 +176,18 @@ class UAVEnv(gym.Env):
         
         self.viewer = None
         self.step_count = 0
+        
+        # Initialize CSV logging for obstacle detection
+        self.csv_log_path = "obstacle_detection_log.csv"
+        self.init_csv_logging()
+        
+        # Store previous velocity for trajectory change calculation
+        self.prev_velocity = np.zeros(3)
 
     def step(self, action):
+        # Store previous velocity for trajectory change calculation
+        self.prev_velocity = self.data.qvel[:3].copy()
+        
         # Action is now 3D: [vx, vy, vz] but we ignore vz and keep constant height
         # Convert action to numpy array if it's a tensor
         if hasattr(action, 'numpy'):
@@ -182,6 +242,9 @@ class UAVEnv(gym.Env):
         self.data.qpos[2] = CONFIG['uav_flight_height']  # Ensure constant height
         self.data.qvel[:] = 0
         
+        # Reset velocity tracking
+        self.prev_velocity = np.zeros(3)
+        
         # Initialize termination info
         self.last_termination_info = {
             'terminated': False,
@@ -193,8 +256,12 @@ class UAVEnv(gym.Env):
         }
         
         # Regenerate obstacles for each episode
-        self.obstacles = EnvironmentGenerator.generate_obstacles()
-        EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+        if self.curriculum_learning:
+            self.load_curriculum_map()
+        else:
+            self.obstacles = EnvironmentGenerator.generate_obstacles()
+            EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+        
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
         
@@ -216,6 +283,149 @@ class UAVEnv(gym.Env):
     def close(self):
         if self.viewer:
             self.viewer.close()
+    
+    def init_csv_logging(self):
+        """Initialize CSV file for obstacle detection logging"""
+        # Create headers for the CSV file
+        headers = [
+            'timestamp', 'episode', 'step', 'curriculum_level', 'map_id', 'obstacle_count',
+            'uav_x', 'uav_y', 'uav_z', 'obstacle_x', 'obstacle_y', 'obstacle_z', 
+            'obstacle_type', 'obstacle_id', 'detection_distance', 'detection_angle', 
+            'prev_velocity_x', 'prev_velocity_y', 'new_velocity_x', 'new_velocity_y', 
+            'trajectory_change_angle'
+        ]
+        
+        # Always create/overwrite the CSV file to clear previous logs
+        with open(self.csv_log_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(headers)
+            
+        # Initialize curriculum episode logging
+        self.curriculum_log_path = "curriculum_learning_log.csv"
+        curriculum_headers = [
+            'timestamp', 'episode', 'curriculum_level', 'episode_in_level', 'map_id',
+            'obstacle_count', 'episode_reward', 'episode_length', 'termination_reason',
+            'goal_reached', 'collision_detected', 'out_of_bounds', 'final_position_x',
+            'final_position_y', 'final_position_z', 'goal_distance', 'final_velocity'
+        ]
+        
+        # Always create/overwrite the curriculum log file
+        with open(self.curriculum_log_path, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(curriculum_headers)
+                
+    def log_obstacle_detection(self, uav_pos, obstacle_pos, obstacle_type, obstacle_id, 
+                             detection_distance, detection_angle, prev_vel, new_vel):
+        """Log obstacle detection event to CSV file"""
+        # Calculate trajectory change angle
+        prev_vel_2d = prev_vel[:2]
+        new_vel_2d = new_vel[:2]
+        
+        trajectory_change_angle = 0.0
+        if np.linalg.norm(prev_vel_2d) > 0.01 and np.linalg.norm(new_vel_2d) > 0.01:
+            # Normalize vectors
+            prev_vel_norm = prev_vel_2d / np.linalg.norm(prev_vel_2d)
+            new_vel_norm = new_vel_2d / np.linalg.norm(new_vel_2d)
+            
+            # Calculate angle between vectors
+            dot_product = np.clip(np.dot(prev_vel_norm, new_vel_norm), -1.0, 1.0)
+            trajectory_change_angle = np.degrees(np.arccos(dot_product))
+        
+        # Write to CSV with curriculum information
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        curriculum_info = self.get_curriculum_info() if self.curriculum_learning else None
+        
+        row = [
+            timestamp, getattr(self, 'current_episode', 0), self.step_count,
+            curriculum_info['current_level'] if curriculum_info else 0,
+            curriculum_info['current_map_info']['map_id'] if curriculum_info and curriculum_info['current_map_info'] else 0,
+            curriculum_info['current_map_info']['obstacle_count'] if curriculum_info and curriculum_info['current_map_info'] else 0,
+            uav_pos[0], uav_pos[1], uav_pos[2],
+            obstacle_pos[0], obstacle_pos[1], obstacle_pos[2],
+            obstacle_type, obstacle_id, detection_distance, detection_angle,
+            prev_vel[0], prev_vel[1], new_vel[0], new_vel[1], trajectory_change_angle
+        ]
+        
+        with open(self.csv_log_path, 'a', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(row)
+    
+    def log_curriculum_episode(self, episode_num, episode_in_level, episode_reward, 
+                             episode_length, termination_info):
+        """Log curriculum learning episode data"""
+        if not self.curriculum_learning:
+            return
+            
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        curriculum_info = self.get_curriculum_info()
+        map_info = curriculum_info['current_map_info'] if curriculum_info else {}
+        
+        # Extract termination information
+        final_pos = termination_info.get('final_position', [0, 0, 0])
+        goal_reached = termination_info.get('termination_reason') == 'goal_reached'
+        collision = termination_info.get('collision_detected', False)
+        out_of_bounds = termination_info.get('out_of_bounds', False)
+        
+        row = [
+            timestamp, episode_num, 
+            curriculum_info['current_level'] if curriculum_info else 0,
+            episode_in_level,
+            map_info.get('map_id', 0),
+            map_info.get('obstacle_count', 0),
+            episode_reward, episode_length,
+            termination_info.get('termination_reason', 'unknown'),
+            goal_reached, collision, out_of_bounds,
+            final_pos[0] if len(final_pos) > 0 else 0,
+            final_pos[1] if len(final_pos) > 1 else 0,
+            final_pos[2] if len(final_pos) > 2 else 0,
+            termination_info.get('goal_distance', 0),
+            termination_info.get('final_velocity', 0)
+        ]
+        
+        with open(self.curriculum_log_path, 'a', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(row)
+    
+    def set_curriculum_level(self, obstacle_level):
+        """Set the current curriculum level (1-10 obstacles)"""
+        if not self.curriculum_learning:
+            print("⚠️  Curriculum learning not enabled for this environment")
+            return
+            
+        if obstacle_level < 1 or obstacle_level > 10:
+            print(f"⚠️  Invalid obstacle level: {obstacle_level}. Must be between 1-10")
+            return
+            
+        self.current_obstacle_level = obstacle_level
+        self.current_map_pool = self.curriculum_maps[obstacle_level]
+        print(f"🎓 Curriculum Level Updated: Now using {obstacle_level} obstacle maps")
+    
+    def load_curriculum_map(self):
+        """Load a random map from the current curriculum level"""
+        if not self.curriculum_learning:
+            return
+            
+        # Select random map from current level
+        selected_map = random.choice(self.current_map_pool)
+        self.obstacles = selected_map['obstacles']
+        self.current_map_info = {
+            'obstacle_count': selected_map['obstacle_count'],
+            'map_id': selected_map['map_id']
+        }
+        
+        # Create XML with selected obstacles
+        EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+    
+    def get_curriculum_info(self):
+        """Get current curriculum information"""
+        if not self.curriculum_learning:
+            return None
+            
+        return {
+            'current_level': self.current_obstacle_level,
+            'current_map_info': getattr(self, 'current_map_info', None),
+            'total_levels': 10
+        }
 
     def _get_obs(self):
         pos = self.data.qpos[:3]
@@ -231,6 +441,9 @@ class UAVEnv(gym.Env):
         """Generate LIDAR readings in 360 degrees around the UAV"""
         lidar_readings = []
         
+        # Define obstacle detection threshold (distance at which we consider obstacle "detected")
+        obstacle_detection_threshold = 1.5  # meters
+        
         for i in range(CONFIG['lidar_num_rays']):
             # Calculate ray direction (360 degrees divided by number of rays)
             angle = (2 * math.pi * i) / CONFIG['lidar_num_rays']
@@ -238,6 +451,7 @@ class UAVEnv(gym.Env):
             
             # Cast ray and find closest obstacle or boundary
             min_distance = CONFIG['lidar_range']
+            closest_obstacle = None
             
             # Check boundary intersection
             boundary_dist = self._ray_boundary_intersection(pos, ray_dir)
@@ -249,6 +463,27 @@ class UAVEnv(gym.Env):
                 obs_dist = self._ray_obstacle_intersection(pos, ray_dir, obs)
                 if obs_dist < min_distance:
                     min_distance = obs_dist
+                    closest_obstacle = obs
+            
+            # Log obstacle detection if obstacle is within detection threshold
+            if (closest_obstacle is not None and 
+                min_distance < obstacle_detection_threshold and 
+                min_distance < CONFIG['lidar_range']):
+                
+                # Get current velocity from the data
+                current_vel = self.data.qvel[:3].copy()
+                
+                # Log the obstacle detection
+                self.log_obstacle_detection(
+                    uav_pos=pos,
+                    obstacle_pos=np.array(closest_obstacle['pos']),
+                    obstacle_type=closest_obstacle['shape'],
+                    obstacle_id=closest_obstacle['id'],
+                    detection_distance=min_distance,
+                    detection_angle=np.degrees(angle),
+                    prev_vel=self.prev_velocity.copy(),
+                    new_vel=current_vel
+                )
             
             lidar_readings.append(min_distance)
         
