@@ -114,29 +114,29 @@ class EnvironmentGenerator:
     <!-- UAV starting position -->
     <body name="chassis" pos="{CONFIG['start_pos'][0]} {CONFIG['start_pos'][1]} {CONFIG['start_pos'][2]}">
       <joint type="free" name="root"/>
-      <geom type="box" size="0.12 0.12 0.02" rgba="1.0 0.0 0.0 1.0" mass="0.8"/>
+      <geom name="uav_body" type="box" size="0.12 0.12 0.03" rgba="1.0 0.0 0.0 1.0" mass="0.8"/>
       
       <!-- Propeller arms and motors -->
-      <geom type="box" size="0.08 0.01 0.005" pos="0 0 0.01" rgba="0.3 0.3 0.3 1"/>
-      <geom type="box" size="0.01 0.08 0.005" pos="0 0 0.01" rgba="0.3 0.3 0.3 1"/>
+      <geom type="box" size="0.06 0.008 0.004" pos="0 0 0.008" rgba="0.3 0.3 0.3 1"/>
+      <geom type="box" size="0.008 0.06 0.004" pos="0 0 0.008" rgba="0.3 0.3 0.3 1"/>
       
       <!-- Motor visual geometry -->
-      <geom type="cylinder" size="0.015 0.02" pos="0.08 0.08 0.015" rgba="0.2 0.2 0.2 1"/>
-      <geom type="cylinder" size="0.015 0.02" pos="-0.08 0.08 0.015" rgba="0.2 0.2 0.2 1"/>
-      <geom type="cylinder" size="0.015 0.02" pos="0.08 -0.08 0.015" rgba="0.2 0.2 0.2 1"/>
-      <geom type="cylinder" size="0.015 0.02" pos="-0.08 -0.08 0.015" rgba="0.2 0.2 0.2 1"/>
+      <geom type="cylinder" size="0.012 0.015" pos="0.06 0.06 0.012" rgba="0.2 0.2 0.2 1"/>
+      <geom type="cylinder" size="0.012 0.015" pos="-0.06 0.06 0.012" rgba="0.2 0.2 0.2 1"/>
+      <geom type="cylinder" size="0.012 0.015" pos="0.06 -0.06 0.012" rgba="0.2 0.2 0.2 1"/>
+      <geom type="cylinder" size="0.012 0.015" pos="-0.06 -0.06 0.012" rgba="0.2 0.2 0.2 1"/>
       
       <!-- Propellers -->
-      <geom type="cylinder" size="0.04 0.002" pos="0.08 0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
-      <geom type="cylinder" size="0.04 0.002" pos="-0.08 0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
-      <geom type="cylinder" size="0.04 0.002" pos="0.08 -0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
-      <geom type="cylinder" size="0.04 0.002" pos="-0.08 -0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
+      <geom name="prop1" type="cylinder" size="0.04 0.008" pos="0.06 0.06 0.04" rgba="0.0 0.0 0.0 1.0"/>
+      <geom name="prop2" type="cylinder" size="0.04 0.008" pos="-0.06 0.06 0.04" rgba="0.0 0.0 0.0 1.0"/>
+      <geom name="prop3" type="cylinder" size="0.04 0.008" pos="0.06 -0.06 0.04" rgba="0.0 0.0 0.0 1.0"/>
+      <geom name="prop4" type="cylinder" size="0.04 0.008" pos="-0.06 -0.06 0.04" rgba="0.0 0.0 0.0 1.0"/>
       
       <!-- Sites for motor force application -->
-      <site name="motor1" pos="0.08 0.08 0" size="0.01"/>
-      <site name="motor2" pos="-0.08 0.08 0" size="0.01"/>
-      <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
-      <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
+      <site name="motor1" pos="0.06 0.06 0" size="0.01"/>
+      <site name="motor2" pos="-0.06 0.06 0" size="0.01"/>
+      <site name="motor3" pos="0.06 -0.06 0" size="0.01"/>
+      <site name="motor4" pos="-0.06 -0.06 0" size="0.01"/>
     </body>'''
         
         # Add obstacles
@@ -356,12 +356,41 @@ def update_path_trail(model, data, current_pos):
     for i in range(CONFIG['path_trail_length']):
         geom_idx = trail_start_idx + i
         if 0 <= geom_idx < total_geoms and i < trail_count:
-            model.geom_pos[geom_idx] = path_history[i]
-            alpha = 0.3 + 0.5 * (i / max(1, trail_count))
-            model.geom_rgba[geom_idx] = [0.0, 1.0, 0.0, alpha]
+            # Only modify trail geometries, not UAV geometries
+            try:
+                geom_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_idx) or ""
+            except:
+                geom_name = ""
+            if "trail_" in geom_name:
+                model.geom_pos[geom_idx] = path_history[i]
+                alpha = 0.3 + 0.5 * (i / max(1, trail_count))
+                model.geom_rgba[geom_idx] = [0.0, 1.0, 0.0, alpha]
         elif 0 <= geom_idx < total_geoms:
-            model.geom_pos[geom_idx] = [0, 0, -10]
-            model.geom_rgba[geom_idx] = [0, 0, 0, 0]
+            try:
+                geom_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_idx) or ""
+            except:
+                geom_name = ""
+            if "trail_" in geom_name:
+                model.geom_pos[geom_idx] = [0, 0, -10]
+                model.geom_rgba[geom_idx] = [0, 0, 0, 0]
+
+# Function to ensure UAV visibility
+def ensure_uav_visibility(model):
+    """Makes sure the UAV remains visible by forcing color settings"""
+    # Find all UAV-related geometries and protect them from color changes
+    for i in range(model.ngeom):
+        try:
+            geom_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, i) or ""
+        except:
+            geom_name = ""
+        
+        # Set UAV body (solid red)
+        if "uav_body" in geom_name:
+            model.geom_rgba[i] = [1.0, 0.0, 0.0, 1.0]  # Solid red
+        
+        # Set propellers (solid black)
+        elif "prop" in geom_name:
+            model.geom_rgba[i] = [0.0, 0.0, 0.0, 1.0]  # Solid black
 
 # Open viewer
 with mujoco.viewer.launch_passive(model, data) as viewer:
@@ -422,6 +451,9 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # Update path trail visualization
             if step_count % 5 == 0:
                 update_path_trail(model, data, current_pos)
+                
+            # Force UAV visibility every frame to prevent transparency
+            ensure_uav_visibility(model)
             
             # Forward model to update rendering
             viewer.sync()
