@@ -21,7 +21,7 @@ CONFIG = {
     'collision_distance': 0.1,
     'control_dt': 0.05,
     'max_steps': 50000,  # Max steps per episode
-    'boundary_penalty': -10,  # Penalty for going out of bounds
+    'boundary_penalty': -100,  # Penalty for going out of bounds
     'lidar_range': 2.8,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
     'step_reward': -0.01,    # Survival bonus per timestep

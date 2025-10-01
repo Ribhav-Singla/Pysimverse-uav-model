@@ -19,7 +19,7 @@ CONFIG = {
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,
-    'static_obstacles': 10,
+    'static_obstacles': 6,
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
@@ -35,6 +35,20 @@ CONFIG = {
 }
 
 class EnvironmentGenerator:
+    @staticmethod
+    def get_random_goal_position():
+        """Select a random goal position from the three available corners (excluding start position)"""
+        # Define the four corners of the world
+        half_world = CONFIG['world_size'] / 2
+        corners = [
+            np.array([half_world, half_world, CONFIG['uav_flight_height']]),    # Top-right
+            np.array([half_world, -half_world, CONFIG['uav_flight_height']]),   # Bottom-right
+            np.array([-half_world, half_world, CONFIG['uav_flight_height']])    # Top-left
+        ]
+        # Start position is bottom-left: [-half_world, -half_world, height]
+        # So we exclude it and randomly select from the other three corners
+        return random.choice(corners)
+    
     @staticmethod
     def generate_obstacles():
         """Generate both static and dynamic obstacles with random non-overlapping positions"""
@@ -306,6 +320,10 @@ import os
 
 # ... (CONFIG and EnvironmentGenerator class)
 
+# Set dynamic goal position (randomly select from three available corners)
+CONFIG['goal_pos'] = EnvironmentGenerator.get_random_goal_position()
+print(f"🎯 Goal position set to: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
+
 # Generate complex environment
 print("🏗️ Generating complex environment with static obstacles...")
 obstacles = EnvironmentGenerator.create_xml_with_obstacles()
@@ -317,7 +335,9 @@ data = mujoco.MjData(model)
 print(f"🚁 Complex UAV Navigation Environment Loaded!")
 print(f"📊 Model: {model.nu} actuators, {model.nbody} bodies")
 print(f"🎯 Mission: Navigate from START (green) to GOAL (blue)")
-print(f"🚧 Static obstacles: {CONFIG['static_obstacles']}")
+print(f"� Start Position: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}, {CONFIG['start_pos'][2]:.1f}]")
+print(f"🏁 Goal Position: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
+print(f"�🚧 Static obstacles: {CONFIG['static_obstacles']}")
 print(f"📏 Obstacle height: {CONFIG['obstacle_height']}m")
 print(f"✈️ UAV flight height: {CONFIG['uav_flight_height']}m")
 print(f"🛣️ Green path trail: {CONFIG['path_trail_length']} points")
@@ -518,6 +538,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
         print("\n" + "="*50)
         print("🎉 MISSION RESULT: SUCCESS!")
         print("🏆 UAV successfully navigated to goal without collision!")
+        print(f"📍 Start: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}] → Goal: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}]")
         print("="*50)
         print("🎊 Celebration hover sequence...")
         
