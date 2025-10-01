@@ -302,18 +302,18 @@ def main():
                 termination_info=termination_info
             )
 
-        # Save best model when goal is reached (but continue training)
+        # Save model when goal is reached (but continue training)
         if episode_reward > solved_reward:
             print("########## Goal Reached! ##########")
             print(f"Excellent performance with reward: {episode_reward:.1f}")
             print(f"Episode length: {episode_length} steps")
-            # Save the best model but continue training
-            ppo_agent.save(os.path.join(checkpoint_path, "PPO_UAV_Best.pth"))
-            print(f"Best model saved to {os.path.join(checkpoint_path, 'PPO_UAV_Best.pth')}")
+            # Save the model but continue training
+            ppo_agent.save(os.path.join(checkpoint_path, "PPO_UAV_Weights.pth"))
+            print(f"Model saved to {os.path.join(checkpoint_path, 'PPO_UAV_Weights.pth')}")
             print("🔄 Continuing training for more robustness...")
             print("-" * 50)
         
-        # Track success rate and save milestone models (but continue training)
+        # Track success rate for monitoring (but continue training)
         if len(success_window) >= 100:
             success_rate = sum(success_window) / len(success_window)
             if success_rate >= early_stop_threshold and i_episode % 100 == 0:
@@ -322,9 +322,9 @@ def main():
                 print(f"   Episode: {i_episode}/{max_episodes}")
                 print(f"   Success threshold: {early_stop_threshold*100:.0f}%")
                 print(f"{'='*60}")
-                # Save milestone model but continue training
-                ppo_agent.save(os.path.join(checkpoint_path, f"PPO_UAV_Milestone_{i_episode}.pth"))
-                print(f"✅ Milestone model saved! Continuing training for more robustness...")
+                # Update the main model but continue training
+                ppo_agent.save(os.path.join(checkpoint_path, "PPO_UAV_Weights.pth"))
+                print(f"✅ Model updated! Continuing training for more robustness...")
                 print("-" * 60)
 
         # Print current episode stats (simplified for non-termination cases)

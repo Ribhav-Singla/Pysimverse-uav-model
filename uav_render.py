@@ -477,22 +477,19 @@ ppo_agent = PPOAgent(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs
 
 # Load the trained model
 try:
-    # First try to load the specific weights file
+    # Load the single weight file
     model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth"
+    
     if os.path.exists(model_path):
         ppo_agent.load(model_path)
         print(f"🤖 Trained PPO agent loaded successfully from {model_path}!")
     else:
-        # Fall back to the latest model
-        checkpoint_dir = "PPO_preTrained/UAVEnv/"
-        files = os.listdir(checkpoint_dir)
-        paths = [os.path.join(checkpoint_dir, basename) for basename in files]
-        latest_model = max(paths, key=os.path.getctime)
-        ppo_agent.load(latest_model)
-        print(f"🤖 Trained PPO agent loaded successfully from {latest_model}!")
+        raise FileNotFoundError(f"Weight file not found: {model_path}")
+        
 except Exception as e:
     print(f"⚠️ Could not load trained agent: {str(e)}")
-    print("⚠️ Using random actions.")
+    print("⚠️ Using random actions (model will behave unpredictably).")
+    print("💡 Make sure to run training.py first to generate the weight file.")
 
 path_history = []
 # ... (rest of the script)
