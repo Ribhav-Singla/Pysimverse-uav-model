@@ -19,19 +19,19 @@ CONFIG = {
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,
-    'static_obstacles': 6,
+    'static_obstacles': 9,
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
     'control_dt': 0.05,
-    'boundary_penalty': -10,
-    'lidar_range': 2.75,
+    'boundary_penalty': -100,
+    'lidar_range': 2.8,
     'lidar_num_rays': 16,
     'step_reward': 0.01,
     
     # Render-specific parameters (do not affect agent logic)
     'kp_pos': 1.5,
-    'path_trail_length': 200,
+    'path_trail_length': 600,
 }
 
 class EnvironmentGenerator:
