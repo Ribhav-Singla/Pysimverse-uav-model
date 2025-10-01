@@ -6,6 +6,8 @@ import time
 import math
 import random
 import torch
+import os
+import sys  # For error handling
 from ppo_agent import PPOAgent
 from uav_env import UAVEnv, EnvironmentGenerator
 
@@ -14,30 +16,50 @@ MODEL_PATH = "environment.xml"
 
 # Configuration parameters - MUST match training environment
 CONFIG = {
-    'start_pos': np.array([-4.0, -4.0, 1.0]),
-    'goal_pos': np.array([4.0, 4.0, 1.0]),
+    'start_pos': np.array([-3.0, -3.0, 1.0]),  # Default start position (will be updated dynamically)
+    'goal_pos': np.array([3.0, 3.0, 1.0]),     # Default goal position (will be updated dynamically)
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,
-    'static_obstacles': 6,
+    'static_obstacles': 9,
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
     'control_dt': 0.05,
-    'boundary_penalty': -10,
-    'lidar_range': 2.75,
+    'boundary_penalty': -100,
+    'lidar_range': 2.8,
     'lidar_num_rays': 16,
-    'step_reward': 0.01,
+    'step_reward': -0.01,
     
     # Render-specific parameters (do not affect agent logic)
     'kp_pos': 1.5,
-    'path_trail_length': 200,
+    'path_trail_length': 600,
 }
 
 class EnvironmentGenerator:
     @staticmethod
+    def get_random_corner_position():
+        """Get a random start position from one of the four corners"""
+        half_world = CONFIG['world_size'] / 2 - 1.0  # 1m margin from boundary
+        corners = [
+            np.array([-half_world, -half_world, CONFIG['uav_flight_height']]),  # Bottom-left
+            np.array([half_world, -half_world, CONFIG['uav_flight_height']]),   # Bottom-right
+            np.array([-half_world, half_world, CONFIG['uav_flight_height']]),   # Top-left
+            np.array([half_world, half_world, CONFIG['uav_flight_height']])     # Top-right
+        ]
+        return random.choice(corners)
+    
+    @staticmethod
     def get_random_goal_position():
-        """Select a random goal position from the three available corners (excluding start position)"""
+        """Get a random goal position anywhere in the map (not just corners)"""
+        half_world = CONFIG['world_size'] / 2 - 1.0  # 1m margin from boundary
+        x = random.uniform(-half_world, half_world)
+        y = random.uniform(-half_world, half_world)
+        return np.array([x, y, CONFIG['uav_flight_height']])
+    
+    @staticmethod
+    def get_random_goal_position_legacy():
+        """Legacy method: Select a random goal position from the three available corners (excluding start position)"""
         # Define the four corners of the world
         half_world = CONFIG['world_size'] / 2
         corners = [
@@ -94,7 +116,7 @@ class EnvironmentGenerator:
         return obstacles
     
     @staticmethod
-    def create_xml_with_obstacles():
+    def create_xml_with_obstacles(obstacles):
         """Create XML model with dynamically generated obstacles"""
         xml_template = f'''<mujoco model="complex_uav_env">
   <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
@@ -153,8 +175,7 @@ class EnvironmentGenerator:
       <site name="motor4" pos="-0.06 -0.06 0" size="0.01"/>
     </body>'''
         
-        # Add obstacles
-        obstacles = EnvironmentGenerator.generate_obstacles()
+        # Add obstacles - use the passed obstacles parameter
         for obs in obstacles:
             if obs['shape'] == 'box':
                 xml_template += f'''
@@ -251,7 +272,9 @@ def get_lidar_readings(pos, obstacles):
             if obs_dist < min_distance:
                 min_distance = obs_dist
         
-        lidar_readings.append(min_distance)
+        # Normalize LIDAR reading to [0, 1] range - MUST match training
+        normalized_distance = min_distance / CONFIG['lidar_range']
+        lidar_readings.append(normalized_distance)
     
     return np.array(lidar_readings)
 
@@ -320,13 +343,107 @@ import os
 
 # ... (CONFIG and EnvironmentGenerator class)
 
-# Set dynamic goal position (randomly select from three available corners)
-CONFIG['goal_pos'] = EnvironmentGenerator.get_random_goal_position()
-print(f"🎯 Goal position set to: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
-
-# Generate complex environment
+# Generate obstacles first so we can check positions against them
 print("🏗️ Generating complex environment with static obstacles...")
-obstacles = EnvironmentGenerator.create_xml_with_obstacles()
+obstacles = EnvironmentGenerator.generate_obstacles()
+
+# Helper function to ensure positions are safe from obstacles
+def check_position_safety(position, obstacles, safety_radius=0.5):
+    """Check if a position is safe from obstacle collisions"""
+    for obs in obstacles:
+        obs_pos = np.array(obs['pos'])
+        
+        # For box obstacles
+        if obs['shape'] == 'box':
+            # Calculate minimum distance to any face of the box
+            dx = max(obs_pos[0] - obs['size'][0] - position[0], 
+                     position[0] - (obs_pos[0] + obs['size'][0]), 0)
+            dy = max(obs_pos[1] - obs['size'][1] - position[1], 
+                     position[1] - (obs_pos[1] + obs['size'][1]), 0)
+            dz = max(obs_pos[2] - obs['size'][2] - position[2], 
+                     position[2] - (obs_pos[2] + obs['size'][2]), 0)
+            
+            distance = math.sqrt(dx*dx + dy*dy + dz*dz)
+            
+        # For cylinder obstacles
+        elif obs['shape'] == 'cylinder':
+            # Horizontal distance
+            horizontal_dist = math.sqrt((position[0]-obs_pos[0])**2 + (position[1]-obs_pos[1])**2)
+            # Vertical distance
+            vertical_dist = max(0, abs(position[2]-obs_pos[2]) - obs['size'][1])
+            
+            if horizontal_dist <= obs['size'][0]:
+                # Inside cylinder horizontally
+                if vertical_dist == 0:
+                    distance = 0  # Inside cylinder
+                else:
+                    distance = vertical_dist
+            else:
+                # Outside cylinder horizontally
+                if vertical_dist == 0:
+                    distance = horizontal_dist - obs['size'][0]
+                else:
+                    distance = math.sqrt((horizontal_dist-obs['size'][0])**2 + vertical_dist**2)
+        
+        # Check if distance is less than safety radius
+        if distance < safety_radius:
+            return False
+            
+    return True
+
+# Set up safe start and goal positions
+max_attempts = 50
+safety_radius = 0.8  # Keep at least 0.8m from obstacles
+
+# Generate dynamic start position from one of the corners
+start_pos_safe = False
+start_safety_check_attempts = 0
+
+print("🏠 Generating random start position from corners...")
+while not start_pos_safe and start_safety_check_attempts < max_attempts:
+    start_safety_check_attempts += 1
+    # Get a random corner position
+    CONFIG['start_pos'] = EnvironmentGenerator.get_random_corner_position()
+    
+    # Check if it's safe
+    if check_position_safety(CONFIG['start_pos'], obstacles, safety_radius):
+        start_pos_safe = True
+        print(f"✅ Safe start position set to: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}, {CONFIG['start_pos'][2]:.1f}]")
+        break
+
+if not start_pos_safe:
+    print("⚠️ Warning: Could not find safe start position after multiple attempts!")
+    print("⚠️ Using default corner position [-3, -3, 1]")
+    CONFIG['start_pos'] = np.array([-3.0, -3.0, 1.0])
+
+# Generate dynamic goal position anywhere in the map
+goal_pos_safe = False
+goal_safety_check_attempts = 0
+
+print("🎯 Generating random goal position anywhere in map...")
+while not goal_pos_safe and goal_safety_check_attempts < max_attempts:
+    goal_safety_check_attempts += 1
+    # Get a random goal position anywhere in the map
+    CONFIG['goal_pos'] = EnvironmentGenerator.get_random_goal_position()
+    
+    # Ensure goal is not too close to start position
+    start_goal_distance = np.linalg.norm(CONFIG['goal_pos'][:2] - CONFIG['start_pos'][:2])
+    
+    # Check if it's safe and far enough from start
+    if (check_position_safety(CONFIG['goal_pos'], obstacles, safety_radius) and 
+        start_goal_distance > 2.0):  # At least 2m apart
+        goal_pos_safe = True
+        print(f"✅ Safe goal position set to: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
+        print(f"📏 Start-Goal distance: {start_goal_distance:.1f}m")
+        break
+    
+if not goal_pos_safe:
+    print("⚠️ Warning: Could not find a safe goal position after multiple attempts!")
+    print("⚠️ Goal may be too close to obstacles.")
+    print(f"� Using potentially unsafe goal: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
+
+# Create environment XML with the obstacles
+EnvironmentGenerator.create_xml_with_obstacles(obstacles)
 
 # Load the model and create the simulation data
 model = mujoco.MjModel.from_xml_path(MODEL_PATH)
@@ -342,22 +459,40 @@ print(f"📏 Obstacle height: {CONFIG['obstacle_height']}m")
 print(f"✈️ UAV flight height: {CONFIG['uav_flight_height']}m")
 print(f"🛣️ Green path trail: {CONFIG['path_trail_length']} points")
 
-# Initialize PPO agent
+# Initialize PPO agent with the EXACT same architecture as training
 env = UAVEnv()
-state_dim = env.observation_space.shape[0]
+state_dim = env.observation_space.shape[0]  # Will be 36 with our enhanced features
 action_dim = env.action_space.shape[0]
-ppo_agent = PPOAgent(state_dim, action_dim, 0, 0, 0, 0, 0)
 
-# Load the latest trained model
+# Use EXACT parameters from training.py
+action_std = 1.0            # Start with 100% exploration
+lr_actor = 0.0001           # learning rate for actor
+lr_critic = 0.0004          # learning rate for critic
+gamma = 0.999               # increased for longer-term planning
+K_epochs = 12               # update policy for K epochs
+eps_clip = 0.1              # clip parameter for PPO
+
+# Initialize PPO agent
+ppo_agent = PPOAgent(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, action_std)
+
+# Load the trained model
 try:
-    checkpoint_dir = "PPO_preTrained/UAVEnv/"
-    files = os.listdir(checkpoint_dir)
-    paths = [os.path.join(checkpoint_dir, basename) for basename in files]
-    latest_model = max(paths, key=os.path.getctime)
-    ppo_agent.load(latest_model)
-    print(f"🤖 Trained PPO agent loaded successfully from {latest_model}!")
-except:
-    print("⚠️ Could not load trained agent. Using random actions.")
+    # First try to load the specific weights file
+    model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth"
+    if os.path.exists(model_path):
+        ppo_agent.load(model_path)
+        print(f"🤖 Trained PPO agent loaded successfully from {model_path}!")
+    else:
+        # Fall back to the latest model
+        checkpoint_dir = "PPO_preTrained/UAVEnv/"
+        files = os.listdir(checkpoint_dir)
+        paths = [os.path.join(checkpoint_dir, basename) for basename in files]
+        latest_model = max(paths, key=os.path.getctime)
+        ppo_agent.load(latest_model)
+        print(f"🤖 Trained PPO agent loaded successfully from {latest_model}!")
+except Exception as e:
+    print(f"⚠️ Could not load trained agent: {str(e)}")
+    print("⚠️ Using random actions.")
 
 path_history = []
 # ... (rest of the script)
@@ -395,6 +530,7 @@ def update_path_trail(model, data, current_pos):
                 model.geom_rgba[geom_idx] = [0, 0, 0, 0]
 
 # Function to ensure UAV visibility
+
 def ensure_uav_visibility(model):
     """Makes sure the UAV remains visible by forcing color settings"""
     # Find all UAV-related geometries and protect them from color changes
@@ -434,13 +570,63 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             current_pos = data.qpos[:3].copy()
             current_vel = data.qvel[:3].copy()
             
-            # Create observation for PPO agent (MUST match training environment)
+            # Create observation for PPO agent - IDENTICAL to training environment
             goal_dist = CONFIG['goal_pos'] - current_pos
             lidar_readings = get_lidar_readings(current_pos, obstacles)
-            state = np.concatenate([current_pos, current_vel, goal_dist, lidar_readings])
+            
+            # === LIDAR FEATURE ENGINEERING ===
+            # EXACTLY MATCHING the processing in uav_env.py _get_obs()
+            
+            # 1. Minimum distance (closest obstacle)
+            min_lidar = np.min(lidar_readings)
+            
+            # 2. Mean distance (overall clearance)
+            mean_lidar = np.mean(lidar_readings)
+            
+            # 3. Direction to closest obstacle (unit vector)
+            closest_idx = np.argmin(lidar_readings)
+            closest_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays']
+            obstacle_direction = np.array([np.cos(closest_angle), np.sin(closest_angle)])
+            
+            # 4. Danger level (ratio of close obstacles)
+            danger_threshold = 0.36  # 1.0m / 2.8m normalized
+            num_close_obstacles = np.sum(lidar_readings < danger_threshold)
+            danger_level = num_close_obstacles / CONFIG['lidar_num_rays']
+            
+            # 5. Directional clearance (front/right/back/left sectors)
+            sector_size = len(lidar_readings) // 4
+            front_clear = np.mean(lidar_readings[0:sector_size])
+            right_clear = np.mean(lidar_readings[sector_size:2*sector_size])
+            back_clear = np.mean(lidar_readings[2*sector_size:3*sector_size])
+            left_clear = np.mean(lidar_readings[3*sector_size:4*sector_size])
+            
+            # 6. Goal direction alignment (unit vector toward goal)
+            goal_direction_norm = goal_dist[:2] / (np.linalg.norm(goal_dist[:2]) + 1e-8)
+            
+            # Combine all LIDAR features (11 dimensions)
+            lidar_features = np.array([
+                min_lidar,                    # 1D
+                mean_lidar,                   # 1D
+                obstacle_direction[0],        # 1D
+                obstacle_direction[1],        # 1D
+                danger_level,                 # 1D
+                front_clear,                  # 1D
+                right_clear,                  # 1D
+                back_clear,                   # 1D
+                left_clear,                   # 1D
+                goal_direction_norm[0],       # 1D
+                goal_direction_norm[1]        # 1D
+            ])
+            
+            # Create exact 36-dimensional state vector as defined in uav_env.py
+            # 3 (pos) + 3 (vel) + 3 (goal) + 16 (lidar) + 11 (lidar features) = 36 dimensions
+            state = np.concatenate([current_pos, current_vel, goal_dist, lidar_readings, lidar_features])
+            
+            # Convert to torch tensor
+            state_tensor = torch.FloatTensor(state.reshape(1, -1))
 
             # Agent selects action
-            raw_action, _ = ppo_agent.select_action(state)
+            raw_action, _ = ppo_agent.select_action(state_tensor)
             action = raw_action.flatten() # Ensure action is a 1D array
 
             # --- Height Control ---
@@ -460,13 +646,17 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # Step the simulation
             mujoco.mj_step(model, data)
 
-            # Enforce velocity constraints
+            # Enforce velocity constraints (match training velocity limits)
             vel = data.qvel[:3]
             speed = np.linalg.norm(vel)
-            if speed < 0.5:
-                data.qvel[:3] = (vel / speed) * 0.5 if speed > 0 else np.zeros(3)
-            elif speed > 1.5:
-                data.qvel[:3] = (vel / speed) * 1.5
+            # Using the same velocity limits as in the velocity curriculum
+            min_vel = 0.1
+            max_vel = 1.0  # Medium velocity for demonstration
+            
+            if speed < min_vel and speed > 0:
+                data.qvel[:3] = (vel / speed) * min_vel if speed > 0 else np.zeros(3)
+            elif speed > max_vel:
+                data.qvel[:3] = (vel / speed) * max_vel
             
             # Update path trail visualization
             if step_count % 5 == 0:
