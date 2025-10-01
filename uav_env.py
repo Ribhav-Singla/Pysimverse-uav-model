@@ -24,7 +24,7 @@ CONFIG = {
     'boundary_penalty': -10,  # Penalty for going out of bounds
     'lidar_range': 2.8,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
-    'step_reward': 0.01,    # Survival bonus per timestep
+    'step_reward': -0.01,    # Survival bonus per timestep
 }
 
 class EnvironmentGenerator:
@@ -237,6 +237,9 @@ class UAVEnv(gym.Env):
         super().reset(seed=seed)
         self.step_count = 0
         
+        # Set dynamic goal position (randomly select from three available corners)
+        CONFIG['goal_pos'] = self._get_random_goal_position()
+        
         # Reset UAV position and state with constant height
         self.data.qpos[:3] = CONFIG['start_pos']
         self.data.qpos[2] = CONFIG['uav_flight_height']  # Ensure constant height
@@ -284,11 +287,25 @@ class UAVEnv(gym.Env):
         if self.viewer:
             self.viewer.close()
     
+    def _get_random_goal_position(self):
+        """Select a random goal position from the three available corners (excluding start position)"""
+        # Define the four corners of the world
+        half_world = CONFIG['world_size'] / 2
+        corners = [
+            np.array([half_world, half_world, CONFIG['uav_flight_height']]),    # Top-right
+            np.array([half_world, -half_world, CONFIG['uav_flight_height']]),   # Bottom-right
+            np.array([-half_world, half_world, CONFIG['uav_flight_height']])    # Top-left
+        ]
+        # Start position is bottom-left: [-half_world, -half_world, height]
+        # So we exclude it and randomly select from the other three corners
+        return random.choice(corners)
+    
     def init_csv_logging(self):
         """Initialize CSV file for obstacle detection logging"""
         # Create headers for the CSV file
         headers = [
             'timestamp', 'episode', 'step', 'curriculum_level', 'map_id', 'obstacle_count',
+            'start_x', 'start_y', 'start_z', 'goal_x', 'goal_y', 'goal_z',
             'uav_x', 'uav_y', 'uav_z', 'obstacle_x', 'obstacle_y', 'obstacle_z', 
             'obstacle_type', 'obstacle_id', 'detection_distance', 'detection_angle', 
             'prev_velocity_x', 'prev_velocity_y', 'new_velocity_x', 'new_velocity_y', 
@@ -304,7 +321,8 @@ class UAVEnv(gym.Env):
         self.curriculum_log_path = "curriculum_learning_log.csv"
         curriculum_headers = [
             'timestamp', 'episode', 'curriculum_level', 'episode_in_level', 'map_id',
-            'obstacle_count', 'episode_reward', 'episode_length', 'termination_reason',
+            'obstacle_count', 'start_x', 'start_y', 'start_z', 'goal_x', 'goal_y', 'goal_z',
+            'episode_reward', 'episode_length', 'termination_reason',
             'goal_reached', 'collision_detected', 'out_of_bounds', 'final_position_x',
             'final_position_y', 'final_position_z', 'goal_distance', 'final_velocity'
         ]
@@ -340,6 +358,8 @@ class UAVEnv(gym.Env):
             curriculum_info['current_level'] if curriculum_info else 0,
             curriculum_info['current_map_info']['map_id'] if curriculum_info and curriculum_info['current_map_info'] else 0,
             curriculum_info['current_map_info']['obstacle_count'] if curriculum_info and curriculum_info['current_map_info'] else 0,
+            CONFIG['start_pos'][0], CONFIG['start_pos'][1], CONFIG['start_pos'][2],
+            CONFIG['goal_pos'][0], CONFIG['goal_pos'][1], CONFIG['goal_pos'][2],
             uav_pos[0], uav_pos[1], uav_pos[2],
             obstacle_pos[0], obstacle_pos[1], obstacle_pos[2],
             obstacle_type, obstacle_id, detection_distance, detection_angle,
@@ -372,6 +392,8 @@ class UAVEnv(gym.Env):
             episode_in_level,
             map_info.get('map_id', 0),
             map_info.get('obstacle_count', 0),
+            CONFIG['start_pos'][0], CONFIG['start_pos'][1], CONFIG['start_pos'][2],
+            CONFIG['goal_pos'][0], CONFIG['goal_pos'][1], CONFIG['goal_pos'][2],
             episode_reward, episode_length,
             termination_info.get('termination_reason', 'unknown'),
             goal_reached, collision, out_of_bounds,
