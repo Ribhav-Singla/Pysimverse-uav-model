@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from uav_env import UAVEnv
+from uav_env import UAVEnv, CONFIG
 from ppo_agent import PPOAgent
 import os
 
@@ -28,24 +28,12 @@ def main():
     
     # Curriculum Learning Parameters
     curriculum_learning = True
-    total_episodes = 1000       # Total episodes across all levels
+    episodes_per_level_count = 500  # Episodes per curriculum level
     total_levels = 10           # Obstacle levels 1-10
     
-    # Calculate episodes per level based on proportional distribution
-    # Level weights: 1, 2, 3, ..., 10 (sum = 55)
-    level_weights = list(range(1, total_levels + 1))
-    total_weight = sum(level_weights)
-    
-    # Calculate episodes per level proportionally
-    episodes_per_level = []
-    allocated_episodes = 0
-    for i, weight in enumerate(level_weights):
-        if i == len(level_weights) - 1:  # Last level gets remaining episodes
-            level_episodes = total_episodes - allocated_episodes
-        else:
-            level_episodes = int((weight / total_weight) * total_episodes)
-        episodes_per_level.append(level_episodes)
-        allocated_episodes += level_episodes
+    # Set equal episodes for each level
+    episodes_per_level = [episodes_per_level_count] * total_levels
+    total_episodes = episodes_per_level_count * total_levels  # 500 * 10 = 5000 episodes
     
     max_episodes = total_episodes
     max_timesteps = 50000        # max timesteps in one episode
@@ -87,7 +75,7 @@ def main():
     print("🎓 CURRICULUM LEARNING ENABLED")
     print(f"   - Training across {total_levels} difficulty levels (1-10 obstacles)")
     print(f"   - Total episodes: {total_episodes}")
-    print("   - Episodes per level (proportional distribution):")
+    print("   - Episodes per level (equal distribution):")
     for i, episodes in enumerate(episodes_per_level):
         print(f"     Level {i+1} ({i+1} obstacles): {episodes} episodes")
     print(f"   - 20 different maps per obstacle level")
@@ -204,6 +192,8 @@ def main():
                 if curriculum_info:
                     print(f"Curriculum Level: {curriculum_info['current_level']} obstacles")
                     print(f"Level Progress: {episodes_in_current_level}/{episodes_per_level}")
+                print(f"Start Position: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}, {CONFIG['start_pos'][2]:.1f}]")
+                print(f"Goal Position: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
                 print(f"Reason: {termination_info.get('termination_reason', 'unknown')}")
                 print(f"Final Position: {termination_info.get('final_position', 'unknown')}")
                 print(f"Goal Distance: {termination_info.get('goal_distance', 0):.2f}")
@@ -251,10 +241,13 @@ def main():
         # Print current episode stats (simplified for non-termination cases)
         if not (done or truncated):
             if curriculum_learning:
-                print('Episode {} (Level {}) \t Length: {} \t Reward: {:.1f}'.format(
-                    i_episode, current_curriculum_level, episode_length, episode_reward))
+                print('Episode {} (Level {}) \t Length: {} \t Reward: {:.1f} \t Start: [{:.1f},{:.1f}] \t Goal: [{:.1f},{:.1f}]'.format(
+                    i_episode, current_curriculum_level, episode_length, episode_reward,
+                    CONFIG['start_pos'][0], CONFIG['start_pos'][1], CONFIG['goal_pos'][0], CONFIG['goal_pos'][1]))
             else:
-                print('Episode {} \t Length: {} \t Reward: {:.1f}'.format(i_episode, episode_length, episode_reward))
+                print('Episode {} \t Length: {} \t Reward: {:.1f} \t Start: [{:.1f},{:.1f}] \t Goal: [{:.1f},{:.1f}]'.format(
+                    i_episode, episode_length, episode_reward,
+                    CONFIG['start_pos'][0], CONFIG['start_pos'][1], CONFIG['goal_pos'][0], CONFIG['goal_pos'][1]))
         
         # Save model periodically and track best performance
         if i_episode % log_interval == 0:
