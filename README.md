@@ -54,7 +54,7 @@ The video showcases:
 
 ## 🚁 Project Overview
 
-This project implements an intelligent UAV navigation system that learns to navigate from a fixed start position to dynamic goal locations while avoiding obstacles. The system uses:
+This project implements an intelligent UAV navigation system that learns to navigate from a random start position to random goal location while avoiding obstacles. The system uses:
 
 - **MuJoCo Physics Engine**: Realistic 3D physics simulation with accurate dynamics
 - **PPO (Proximal Policy Optimization)**: State-of-the-art reinforcement learning algorithm
@@ -69,7 +69,7 @@ This project implements an intelligent UAV navigation system that learns to navi
 ## ✨ Key Features
 
 ### 🎯 Navigation & Control
-- ✅ **Fixed Start Position**: Consistent starting point at [-3.0, -3.0, 1.0]
+- ✅ **Random Start Position**: Consistent starting point at [-3.0, -3.0, 1.0]
 - ✅ **Dynamic Goal Placement**: Goals anywhere - corners, boundaries, or interior
 - ✅ **Goal Stabilization**: Two-phase system (Approach Mode + Lock Mode)
 - ✅ **Velocity Curriculum**: Adaptive speed limits from 0.05 m/s to 2.0 m/s
@@ -90,7 +90,7 @@ This project implements an intelligent UAV navigation system that learns to navi
 
 ### 🗺️ Environment Design
 - ✅ **Goal-Centric Obstacles**: 67% around goal, 25% on path, 8% random
-- ✅ **Challenging Maps**: Fixed start with goals anywhere in 8x8m world
+- ✅ **Challenging Maps**: random start with goals anywhere in 8x8m world
 - ✅ **Safe Positioning**: Automatic clearance zones (1.5m start, 0.5m goal)
 - ✅ **Reproducible Maps**: Seeded generation for consistent evaluation
 
@@ -269,7 +269,7 @@ Total: 500 unique maps, 3000 episodes
    - 50 challenging maps per obstacle level (500 total maps)
    - Close-range goals (anywhere in map)
    - Strategic obstacle placement + uniform distribution
-   - Fixed start position at [-3.0, -3.0, 1.0]
+   - Random start position at [-3.0, -3.0, 1.0]
 
 Episode: 10, Avg Reward: 150.5, Success Rate: 20%
 Episode: 20, Avg Reward: 380.2, Success Rate: 45%
