@@ -24,7 +24,7 @@ def main():
     env_name = "UAVEnv"
     render = False
     solved_reward = 1000         # threshold to save best model (but continue training)
-    log_interval = 10          # print avg reward in the interval
+    log_interval = 50          # print avg reward in the interval
     
     # Curriculum Learning Parameters
     curriculum_learning = True
@@ -40,7 +40,7 @@ def main():
 
     update_timestep = 1024      # OPTIMIZED: update policy every 1024 timesteps (was 2048)
     action_std = 1.0            # OPTIMIZED: Start with 100% exploration (was 0.3)
-    K_epochs = 12               # update policy for K epochs (reduced for faster updates)
+    K_epochs = 11               # update policy for K epochs (reduced for faster updates)
     eps_clip = 0.1              # clip parameter for PPO (reduced for finer control)
     gamma = 0.999               # increased for longer-term planning
 

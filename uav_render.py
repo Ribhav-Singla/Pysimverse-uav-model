@@ -27,13 +27,13 @@ CONFIG = {
     'collision_distance': 0.1,
     'control_dt': 0.05,
     'boundary_penalty': -100,
-    'lidar_range': 2.8,
+    'lidar_range': 2.9,
     'lidar_num_rays': 16,
     'step_reward': -0.01,
     
     # Render-specific parameters (do not affect agent logic)
     'kp_pos': 1.5,
-    'path_trail_length': 600,
+    'path_trail_length': 500,
 }
 
 class EnvironmentGenerator:
@@ -561,6 +561,12 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
     mission_complete = False
     collision_occurred = False
     
+    # Goal stabilization variables
+    goal_reached = False
+    goal_stabilization_steps = 0
+    goal_hold_duration = 30  # Steps before confirming stabilization (1 second)
+    stay_at_goal_indefinitely = True  # Keep UAV at goal after reaching it
+    
     try:
         while viewer.is_running() and not mission_complete and not collision_occurred:
             # Get current UAV state
@@ -635,10 +641,74 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             height_error = desired_height - current_height
             vz_correction = CONFIG['kp_pos'] * height_error
             
-            # Apply velocity control
-            data.qvel[0] = action[0]      # Agent controls X-velocity
-            data.qvel[1] = action[1]      # Agent controls Y-velocity
-            data.qvel[2] = vz_correction  # Height controller manages Z-velocity
+            # Check if UAV is at goal position BEFORE applying velocity
+            goal_distance = np.linalg.norm(current_pos - CONFIG['goal_pos'])
+            
+            # GOAL STABILIZATION: If UAV reaches goal, apply strong braking to keep it there
+            if goal_distance < 0.5:  # Same threshold as training environment
+                if not goal_reached:
+                    print(f"\n🎯 GOAL REACHED! Stabilizing UAV at goal position...")
+                    goal_reached = True
+                    goal_stabilization_steps = 0
+                
+                # Apply VERY strong braking forces to LOCK UAV at goal
+                goal_vector = CONFIG['goal_pos'] - current_pos
+                
+                # Check if we're very close to goal center (within 0.1m)
+                if goal_distance < 0.1:
+                    # LOCK MODE: Virtually stop all movement
+                    # Apply extremely strong velocity damping (99% reduction)
+                    stabilization_vel = -data.qvel[:2] * 0.99
+                    
+                    # Add tiny position correction to keep centered
+                    stabilization_vel += goal_vector[:2] * 5.0
+                else:
+                    # APPROACH MODE: Strong position correction with damping
+                    position_correction = goal_vector[:2] * 3.0  # Very strong pull toward goal
+                    
+                    # Strong velocity damping to eliminate momentum
+                    velocity_damping = -data.qvel[:2] * 0.9  # Reduce current velocity by 90%
+                    
+                    # Combine corrections with priority on stopping motion
+                    stabilization_vel = position_correction + velocity_damping
+                
+                # Limit stabilization velocity to prevent overshooting
+                stabilization_speed = np.linalg.norm(stabilization_vel)
+                max_stabilization_speed = 0.2 if goal_distance < 0.1 else 0.4
+                if stabilization_speed > max_stabilization_speed:
+                    stabilization_vel = (stabilization_vel / stabilization_speed) * max_stabilization_speed
+                
+                # Apply stabilization velocity instead of action-based velocity
+                data.qvel[0] = float(stabilization_vel[0])
+                data.qvel[1] = float(stabilization_vel[1])
+                data.qvel[2] = vz_correction  # Height controller still manages Z-velocity
+                
+                goal_stabilization_steps += 1
+                
+                # Print stabilization confirmation (only once after sufficient steps)
+                if goal_stabilization_steps == goal_hold_duration:
+                    print(f"\n✅ GOAL SUCCESSFULLY REACHED AND STABILIZED!")
+                    print(f"📍 UAV position: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
+                    print(f"📍 Goal position: ({CONFIG['goal_pos'][0]:.2f}, {CONFIG['goal_pos'][1]:.2f}, {CONFIG['goal_pos'][2]:.2f})")
+                    print(f"📏 Distance to goal: {goal_distance:.3f}m")
+                    print(f"🔒 UAV is now LOCKED at goal position")
+                    print(f"🏆 MISSION COMPLETE! (Press ESC or close window to exit)")
+                
+                # Optional: Allow mission to complete but don't set flag if we want to stay indefinitely
+                # Keep UAV at goal instead of ending simulation
+                # mission_complete = stay_at_goal_indefinitely is False
+                    
+            else:
+                # Normal velocity control when not at goal
+                data.qvel[0] = action[0]      # Agent controls X-velocity
+                data.qvel[1] = action[1]      # Agent controls Y-velocity
+                data.qvel[2] = vz_correction  # Height controller manages Z-velocity
+                
+                # Reset goal status if UAV moves too far from goal during stabilization
+                if goal_reached and goal_distance > 1.0:
+                    goal_reached = False
+                    goal_stabilization_steps = 0
+                    print(f"\n⚠️ UAV left goal area during stabilization. Resetting...")
             
             # Step the simulation
             mujoco.mj_step(model, data)
@@ -687,14 +757,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 print(f"⚠️ MISSION FAILED!")
                 break
             
-            # Check if mission is complete
-            goal_distance = np.linalg.norm(current_pos - CONFIG['goal_pos'])
-            if goal_distance < 0.5:
-                mission_complete = True
-                print(f"\n🎉 MISSION COMPLETE! UAV reached the goal!")
-                print(f"Final position: {current_pos}")
-                print(f"Distance to goal: {goal_distance:.2f}m")
-                print(f"🏆 SUCCESS! No collisions occurred!")
+            # Goal checking is now handled in the velocity control section above
             
             # Status updates
             if step_count % 100 == 0:

@@ -22,7 +22,7 @@ CONFIG = {
     'control_dt': 0.05,
     'max_steps': 50000,  # Max steps per episode
     'boundary_penalty': -100,  # Penalty for going out of bounds
-    'lidar_range': 2.8,  # LIDAR maximum detection range
+    'lidar_range': 2.9,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
     'step_reward': -0.01,    # Survival bonus per timestep
 }
@@ -268,6 +268,11 @@ class UAVEnv(gym.Env):
         
         # Episode counter for adaptive thresholds
         self.current_episode = 0
+        
+        # Goal stabilization tracking
+        self.goal_reached = False
+        self.goal_stabilization_steps = 0
+        self.goal_hold_duration = 50  # Steps to hold at goal before episode ends (more steps for better stabilization)
 
     def _get_velocity_limits(self):
         """Get adaptive velocity limits based on training progress (velocity curriculum)"""
@@ -340,10 +345,55 @@ class UAVEnv(gym.Env):
         acceleration_rate = 0.2  # REDUCED: How quickly to change velocity (0-1)
         new_vel = current_vel + acceleration_rate * (target_vel - current_vel)
         
-        # Apply the new velocity
-        self.data.qvel[0] = float(new_vel[0])  # X velocity
-        self.data.qvel[1] = float(new_vel[1])  # Y velocity
-        self.data.qvel[2] = 0.0                # Z velocity = 0 (no vertical movement)
+        # Check if UAV is at goal position BEFORE applying velocity
+        pos = self.data.qpos[:3]
+        goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
+        
+        # GOAL STABILIZATION: If UAV reaches goal, apply strong braking to keep it there
+        if goal_dist < 0.5:  # Same threshold as reward function
+            if not self.goal_reached:
+                print(f"🎯 GOAL REACHED! Stabilizing UAV at goal position...")
+                self.goal_reached = True
+                self.goal_stabilization_steps = 0
+            
+            # Apply VERY strong braking forces to LOCK UAV at goal
+            goal_vector = CONFIG['goal_pos'] - pos
+            
+            # Check if we're very close to goal center (within 0.1m)
+            if goal_dist < 0.1:
+                # LOCK MODE: Virtually stop all movement
+                # Apply extremely strong velocity damping (99% reduction)
+                stabilization_vel = -self.data.qvel[:2] * 0.99
+                
+                # Add tiny position correction to keep centered
+                stabilization_vel += goal_vector[:2] * 5.0
+            else:
+                # APPROACH MODE: Strong position correction with damping
+                position_correction = goal_vector[:2] * 3.0  # Very strong pull toward goal
+                
+                # Strong velocity damping to eliminate momentum
+                velocity_damping = -self.data.qvel[:2] * 0.9  # Reduce current velocity by 90%
+                
+                # Combine corrections with priority on stopping motion
+                stabilization_vel = position_correction + velocity_damping
+            
+            # Limit stabilization velocity to prevent overshooting
+            stabilization_speed = np.linalg.norm(stabilization_vel)
+            max_stabilization_speed = 0.2 if goal_dist < 0.1 else 0.4
+            if stabilization_speed > max_stabilization_speed:
+                stabilization_vel = (stabilization_vel / stabilization_speed) * max_stabilization_speed
+            
+            # Apply stabilization velocity instead of action-based velocity
+            self.data.qvel[0] = float(stabilization_vel[0])
+            self.data.qvel[1] = float(stabilization_vel[1])
+            self.data.qvel[2] = 0.0
+            
+            self.goal_stabilization_steps += 1
+        else:
+            # Normal velocity control when not at goal
+            self.data.qvel[0] = float(new_vel[0])  # X velocity
+            self.data.qvel[1] = float(new_vel[1])  # Y velocity
+            self.data.qvel[2] = 0.0                # Z velocity = 0 (no vertical movement)
         
         # Maintain constant height
         self.data.qpos[2] = CONFIG['uav_flight_height']
@@ -404,6 +454,10 @@ class UAVEnv(gym.Env):
             'collision_detected': False,
             'out_of_bounds': False
         }
+        
+        # Reset goal stabilization tracking
+        self.goal_reached = False
+        self.goal_stabilization_steps = 0
         
         # Regenerate obstacles for each episode
         if self.curriculum_learning:
@@ -830,12 +884,35 @@ class UAVEnv(gym.Env):
             termination_info['collision_detected'] = True
             return reward, termination_info
             
-        # Check if goal is reached
+        # Check if goal is reached and stabilized
         if goal_dist < 0.5:
-            reward = 1000  # INCREASED: Very strong positive reward
-            termination_info['terminated'] = True
-            termination_info['termination_reason'] = 'goal_reached'
-            return reward, termination_info
+            if not self.goal_reached:
+                # First time reaching goal - give large reward but don't terminate yet
+                reward = 500  # Large reward for reaching goal
+                self.goal_reached = True
+                self.goal_stabilization_steps = 0
+            else:
+                # UAV is stabilizing at goal - give smaller continuous rewards
+                reward = 50  # Reward for staying at goal
+                
+                # Check if UAV has been stable at goal long enough
+                if self.goal_stabilization_steps >= self.goal_hold_duration:
+                    # Final bonus for successful goal stabilization
+                    reward += 500  # Bonus for successful stabilization
+                    termination_info['terminated'] = True
+                    termination_info['termination_reason'] = 'goal_reached_and_stabilized'
+                    print(f"✅ GOAL SUCCESSFULLY REACHED AND STABILIZED! ({self.goal_stabilization_steps} steps)")
+                    return reward, termination_info
+                elif goal_dist > 1.0:  # If UAV moves too far from goal during stabilization
+                    reward = -200  # Penalty for leaving goal area
+                    self.goal_reached = False  # Reset goal reached status
+                    self.goal_stabilization_steps = 0
+                    print(f"⚠️  UAV left goal area during stabilization. Resetting...")
+        else:
+            # Reset goal status if UAV is not near goal
+            if self.goal_reached and goal_dist > 1.0:
+                self.goal_reached = False
+                self.goal_stabilization_steps = 0
         
         # === STEP REWARDS (Simplified) ===
         
