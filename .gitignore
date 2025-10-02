@@ -1,11 +1,3 @@
-# Large log files (prevent GitHub size limit issues)
-*.csv
-*_log.csv
-neurosymbolic_advice_log.csv
-episode_positions_log.csv
-curriculum_learning_log.csv
-obstacle_detection_log.csv
-
 # Python bytecode files
 __pycache__/
 *.py[cod]

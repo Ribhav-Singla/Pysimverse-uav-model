@@ -7,7 +7,6 @@ import torch
 import numpy as np
 from uav_env import UAVEnv, CONFIG
 from neurosymbolic_ppo_agent import PPOAgent
-from human_rule_interface import HumanRuleInterface, CLIRuleInterface
 import os
 import threading
 import time
@@ -35,7 +34,6 @@ def main():
     
     # Neurosymbolic Parameters
     enable_neurosymbolic = True
-    enable_human_interface = True
     integration_weight = 0.25   # How much to weight symbolic advice (0.0 = pure RL, 1.0 = pure symbolic)
     
     # Curriculum Learning Parameters
@@ -98,20 +96,7 @@ def main():
     
     if enable_neurosymbolic:
         # Ensure the knowledge base file exists
-        ppo_agent.rdr_kb.save_knowledge_base()  # Ensure the file exists
-    
-    # Setup human rule interface if enabled
-    human_interface = None
-    interface_thread = None
-    if enable_neurosymbolic and enable_human_interface:
-        try:
-            human_interface = HumanRuleInterface(ppo_agent.rdr_kb)
-            interface_thread = human_interface.run_threaded()
-            print("🧠 Human rule interface started - GUI available for adding rules during training")
-        except Exception as e:
-            print(f"⚠️ Could not start GUI interface: {e}")
-            print("🧠 Falling back to CLI interface")
-            human_interface = CLIRuleInterface(ppo_agent.rdr_kb)
+        ppo_agent.rdr_kb.save_knowledge_base()  # Ensure the file exists 
     
     print("--------------------------------------------------------------------------------------------")
     print("🚀 NEUROSYMBOLIC PPO TRAINING CONFIGURATION")
@@ -120,7 +105,6 @@ def main():
         print("🧠 NEUROSYMBOLIC INTEGRATION:")
         print(f"   - Integration Weight: {integration_weight:.2f} (symbolic influence)")
         print(f"   - RDR Knowledge Base: {len(ppo_agent.rdr_kb.rules)} initial rules")
-        print(f"   - Human Interface: {'GUI' if interface_thread else 'CLI'}")
         print()
     
     print("📊 OBSERVATION SPACE:")

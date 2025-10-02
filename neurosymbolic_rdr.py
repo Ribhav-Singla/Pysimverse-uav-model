@@ -100,63 +100,40 @@ class RDRKnowledgeBase:
             self._initialize_expert_rules()
     
     def _initialize_expert_rules(self):
-        """Initialize with basic expert navigation rules"""
+        """Initialize with essential navigation knowledge not captured by rewards"""
         expert_rules = [
-            # Obstacle avoidance rules
+            # Critical safety rule: Avoid imminent collision (knowledge not in reward)
             {
                 "conditions": [
                     RuleCondition(RuleConditionType.LIDAR_MIN, "<", 0.3)
                 ],
                 "action_advice": ActionAdvice.AVOID_OBSTACLE,
-                "confidence": 0.95,
+                "confidence": 0.9,
                 "priority": 10,
                 "created_by": "expert"
             },
             
-            # Goal approach rules  
+            # Navigation efficiency: Direct goal approach when safe (reduces exploration)
             {
                 "conditions": [
-                    RuleCondition(RuleConditionType.DISTANCE_TO_GOAL, "<", 1.0),
-                    RuleCondition(RuleConditionType.LIDAR_MIN, ">", 0.5)
+                    RuleCondition(RuleConditionType.DISTANCE_TO_GOAL, "<", 2.0),
+                    RuleCondition(RuleConditionType.LIDAR_MIN, ">", 0.6)
                 ],
                 "action_advice": ActionAdvice.TURN_TOWARDS_GOAL,
-                "confidence": 0.9,
-                "priority": 8,
-                "created_by": "expert"
-            },
-            
-            # Speed control rules
-            {
-                "conditions": [
-                    RuleCondition(RuleConditionType.VELOCITY_MAGNITUDE, ">", 0.8),
-                    RuleCondition(RuleConditionType.LIDAR_MIN, "<", 0.5)
-                ],
-                "action_advice": ActionAdvice.SLOW_DOWN,
-                "confidence": 0.85,
-                "priority": 9,
-                "created_by": "expert"
-            },
-            
-            # Clearance-based movement
-            {
-                "conditions": [
-                    RuleCondition(RuleConditionType.CLEARANCE_FRONT, ">", 0.7),
-                    RuleCondition(RuleConditionType.GOAL_ALIGNMENT, ">", 0.5)
-                ],
-                "action_advice": ActionAdvice.MOVE_FORWARD,
                 "confidence": 0.8,
                 "priority": 6,
                 "created_by": "expert"
             },
             
-            # Emergency hover rule
+            # Conservative approach in tight spaces (knowledge about safe navigation)
             {
                 "conditions": [
-                    RuleCondition(RuleConditionType.DANGER_LEVEL, ">", 0.8)
+                    RuleCondition(RuleConditionType.LIDAR_MIN, "<", 0.5),
+                    RuleCondition(RuleConditionType.VELOCITY_MAGNITUDE, ">", 0.3)
                 ],
-                "action_advice": ActionAdvice.HOVER,
-                "confidence": 0.95,
-                "priority": 12,
+                "action_advice": ActionAdvice.SLOW_DOWN,
+                "confidence": 0.75,
+                "priority": 7,
                 "created_by": "expert"
             }
         ]
@@ -292,7 +269,7 @@ class NeuroSymbolicIntegrator:
     """Integrates symbolic RDR advice with RL agent actions"""
     
     def __init__(self, rdr_knowledge_base: RDRKnowledgeBase, 
-                 integration_weight: float = 0.3):
+                 integration_weight: float = 0.15):
         self.rdr_kb = rdr_knowledge_base
         self.integration_weight = integration_weight  # How much to weight symbolic advice
         self.advice_log = []
@@ -337,66 +314,79 @@ class NeuroSymbolicIntegrator:
         
         return features
     
-    def action_advice_to_vector(self, advice: ActionAdvice, confidence: float) -> np.ndarray:
-        """Convert symbolic advice to action vector modification"""
-        # Action space is 3D: [vx, vy, vz] normalized to [0, 1]
-        advice_vector = np.zeros(3)
+    def action_advice_to_vector(self, advice: ActionAdvice, confidence: float, observation: np.ndarray) -> np.ndarray:
+        """Convert symbolic advice to continuous action bias based on current state"""
+        # Extract relevant features for continuous action generation
+        pos = observation[0:3]
+        vel = observation[3:6] 
+        goal_dist = observation[6:9]
+        features = self.extract_observation_features(observation)
         
-        if advice == ActionAdvice.MOVE_FORWARD:
-            advice_vector = np.array([0.8, 0.0, 0.0])
-        elif advice == ActionAdvice.MOVE_BACKWARD:
-            advice_vector = np.array([0.2, 0.0, 0.0])
-        elif advice == ActionAdvice.MOVE_LEFT:
-            advice_vector = np.array([0.0, 0.8, 0.0])
-        elif advice == ActionAdvice.MOVE_RIGHT:
-            advice_vector = np.array([0.0, 0.2, 0.0])
-        elif advice == ActionAdvice.SLOW_DOWN:
-            advice_vector = np.array([0.3, 0.3, 0.0])
-        elif advice == ActionAdvice.SPEED_UP:
-            advice_vector = np.array([0.9, 0.9, 0.0])
-        elif advice == ActionAdvice.HOVER:
-            advice_vector = np.array([0.5, 0.5, 0.0])
+        # Start with neutral action (no bias)
+        advice_vector = np.array([0.5, 0.5, 0.5])
+        
+        if advice == ActionAdvice.AVOID_OBSTACLE:
+            # Continuous avoidance: move away from closest obstacle
+            clearance_left = features.get("clearance_left", 0.5)
+            clearance_right = features.get("clearance_right", 0.5)
+            clearance_front = features.get("clearance_front", 0.5)
+            clearance_back = features.get("clearance_back", 0.5)
+            
+            # Create smooth avoidance bias (higher clearance = stronger bias toward that direction)
+            bias_x = (clearance_front - clearance_back) * 0.3  # Range: [-0.3, 0.3]
+            bias_y = (clearance_left - clearance_right) * 0.3  # Range: [-0.3, 0.3]
+            
+            advice_vector[0] = 0.5 + bias_x  # Bias toward direction with more clearance
+            advice_vector[1] = 0.5 + bias_y
+            
         elif advice == ActionAdvice.TURN_TOWARDS_GOAL:
-            # This requires goal direction - handled in integrate_with_rl_action
-            advice_vector = np.array([0.7, 0.7, 0.0])
-        elif advice == ActionAdvice.AVOID_OBSTACLE:
-            # This requires obstacle direction - handled in integrate_with_rl_action  
-            advice_vector = np.array([0.4, 0.4, 0.0])
-        else:  # NO_ADVICE
-            advice_vector = np.array([0.5, 0.5, 0.0])
+            # Continuous goal-seeking: smooth direction toward goal
+            if np.linalg.norm(goal_dist[:2]) > 0.1:  # Avoid division by zero
+                goal_direction = goal_dist[:2] / np.linalg.norm(goal_dist[:2])
+                # Scale goal direction to action bias (gentler than discrete actions)
+                advice_vector[0] = 0.5 + goal_direction[0] * 0.2  # Range: [0.3, 0.7]
+                advice_vector[1] = 0.5 + goal_direction[1] * 0.2  # Range: [0.3, 0.7]
+                
+        elif advice == ActionAdvice.SLOW_DOWN:
+            # Gentle velocity reduction bias
+            current_speed = np.linalg.norm(vel[:2])
+            if current_speed > 0.1:  # Only slow down if moving
+                advice_vector[0] = 0.4  # Slight bias toward slower movement
+                advice_vector[1] = 0.4
+                
+        elif advice == ActionAdvice.HOVER:
+            # Stay near current position (minimal movement bias)
+            advice_vector = np.array([0.5, 0.5, 0.5])
+            
+        # All other advice types use neutral bias (let RL agent decide)
         
-        return advice_vector * confidence
+        # Apply confidence scaling (low confidence = less bias)
+        bias_strength = confidence * 0.5  # Max bias is 50% of the advice
+        advice_vector = 0.5 + (advice_vector - 0.5) * bias_strength
+        
+        return advice_vector
     
     def integrate_with_rl_action(self, rl_action: np.ndarray, observation: np.ndarray) -> np.ndarray:
-        """Integrate symbolic advice with RL action"""
+        """Integrate symbolic advice with RL action using continuous guidance"""
         features = self.extract_observation_features(observation)
         rule_advice = self.rdr_kb.get_rule_advice(features)
         
         if rule_advice is None:
-            # No applicable rules, return RL action
+            # No applicable rules, return RL action unchanged
             return rl_action
         
         advice_type, confidence = rule_advice
-        symbolic_action = self.action_advice_to_vector(advice_type, confidence)
         
-        # Special handling for directional advice
-        if advice_type == ActionAdvice.TURN_TOWARDS_GOAL:
-            goal_dist = observation[6:9]
-            if np.linalg.norm(goal_dist) > 0:
-                goal_direction = goal_dist / np.linalg.norm(goal_dist)
-                symbolic_action[0] = 0.5 + 0.3 * goal_direction[0]  # Scale to [0.2, 0.8]
-                symbolic_action[1] = 0.5 + 0.3 * goal_direction[1]
+        # Get continuous action bias based on current state
+        symbolic_bias = self.action_advice_to_vector(advice_type, confidence, observation)
         
-        elif advice_type == ActionAdvice.AVOID_OBSTACLE:
-            # Move perpendicular to obstacle direction
-            obs_dir_x = features.get("obstacle_direction", 0)
-            if abs(obs_dir_x) > 0.1:  # Significant obstacle presence
-                # Move perpendicular to obstacle
-                symbolic_action[0] = 0.3 if obs_dir_x > 0 else 0.7
-                symbolic_action[1] = 0.7  # Prefer moving "up" when avoiding
+        # Apply gentle integration: symbolic advice provides directional bias
+        # Rather than replacing action, we nudge the RL action toward the advised direction
+        integration_strength = self.integration_weight * confidence  # Scale by confidence
         
-        # Weighted combination of RL and symbolic actions
-        integrated_action = (1 - self.integration_weight) * rl_action + self.integration_weight * symbolic_action
+        # Gentle nudging approach: symbolic advice shifts the RL action
+        bias_vector = symbolic_bias - 0.5  # Convert to bias range [-0.5, 0.5]
+        integrated_action = rl_action + integration_strength * bias_vector
         
         # Ensure action stays in [0, 1] bounds
         integrated_action = np.clip(integrated_action, 0.0, 1.0)
@@ -407,8 +397,9 @@ class NeuroSymbolicIntegrator:
             "advice_type": advice_type.value,
             "confidence": confidence,
             "rl_action": rl_action.tolist(),
-            "symbolic_action": symbolic_action.tolist(),
+            "symbolic_bias": symbolic_bias.tolist(),
             "integrated_action": integrated_action.tolist(),
+            "integration_strength": integration_strength,
             "features": features
         })
         
@@ -425,7 +416,7 @@ class NeuroSymbolicIntegrator:
             return
         
         fieldnames = ["timestamp", "advice_type", "confidence", "rl_action", 
-                     "symbolic_action", "integrated_action"] + list(self.advice_log[0]["features"].keys())
+                     "symbolic_bias", "integrated_action", "integration_strength"] + list(self.advice_log[0]["features"].keys())
         
         with open(filename, 'w', newline='') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -437,8 +428,9 @@ class NeuroSymbolicIntegrator:
                     "advice_type": entry["advice_type"],
                     "confidence": entry["confidence"],
                     "rl_action": str(entry["rl_action"]),
-                    "symbolic_action": str(entry["symbolic_action"]),
-                    "integrated_action": str(entry["integrated_action"])
+                    "symbolic_bias": str(entry["symbolic_bias"]),
+                    "integrated_action": str(entry["integrated_action"]),
+                    "integration_strength": entry["integration_strength"]
                 }
                 row.update(entry["features"])
                 writer.writerow(row)
@@ -453,7 +445,7 @@ if __name__ == "__main__":
     
     # Test with dummy observation
     dummy_obs = np.random.rand(36)  # 36D observation space
-    dummy_rl_action = np.array([0.6, 0.4, 0.0])
+    dummy_rl_action = np.array([0.6, 0.4, 0.5])  # [vx, vy, vz=0.5] for 2D movement
     
     features = integrator.extract_observation_features(dummy_obs)
     print(f"\nExtracted features: {features}")
@@ -461,9 +453,12 @@ if __name__ == "__main__":
     advice = rdr_kb.get_rule_advice(features)
     if advice:
         print(f"Rule advice: {advice[0].value} (confidence: {advice[1]:.2f})")
+        symbolic_bias = integrator.action_advice_to_vector(advice[0], advice[1], dummy_obs)
+        print(f"Symbolic bias: {symbolic_bias}")
     else:
         print("No applicable rules found")
     
     integrated_action = integrator.integrate_with_rl_action(dummy_rl_action, dummy_obs)
     print(f"\nRL Action: {dummy_rl_action}")
     print(f"Integrated Action: {integrated_action}")
+    print(f"Action change: {integrated_action - dummy_rl_action}")
