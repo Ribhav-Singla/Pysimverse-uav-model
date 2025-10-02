@@ -7,30 +7,31 @@ class ActorCritic(nn.Module):
     def __init__(self, state_dim, action_dim, action_std_init):
         super(ActorCritic, self).__init__()
 
+        # UPGRADED: Hidden dimension from 128 to 256
         self.actor = nn.Sequential(
-            nn.Linear(state_dim, 128),
-            nn.LayerNorm(128),
+            nn.Linear(state_dim, 256),
+            nn.LayerNorm(256),
             nn.Tanh(),
-            nn.Linear(128, 128),
-            nn.LayerNorm(128),
+            nn.Linear(256, 256),
+            nn.LayerNorm(256),
             nn.Tanh(),
-            nn.Linear(128, 128),
-            nn.LayerNorm(128),
+            nn.Linear(256, 256),
+            nn.LayerNorm(256),
             nn.Tanh(),
-            nn.Linear(128, action_dim),
+            nn.Linear(256, action_dim),
         )
 
         self.critic = nn.Sequential(
-            nn.Linear(state_dim, 128),
-            nn.LayerNorm(128),
+            nn.Linear(state_dim, 256),
+            nn.LayerNorm(256),
             nn.Tanh(),
-            nn.Linear(128, 128),
-            nn.LayerNorm(128),
+            nn.Linear(256, 256),
+            nn.LayerNorm(256),
             nn.Tanh(),
-            nn.Linear(128, 128),
-            nn.LayerNorm(128),
+            nn.Linear(256, 256),
+            nn.LayerNorm(256),
             nn.Tanh(),
-            nn.Linear(128, 1)
+            nn.Linear(256, 1)
         )
         
         self.action_dim = action_dim
@@ -81,6 +82,13 @@ class PPOAgent:
         self.policy_old.load_state_dict(self.policy.state_dict())
         
         self.MseLoss = nn.MSELoss()
+        
+        # ADDED: Learning rate schedulers for adaptive LR
+        from torch.optim.lr_scheduler import StepLR
+        # Decay LR by 30% every 1000 episodes (called from training loop)
+        self.scheduler = StepLR(self.optimizer, step_size=1, gamma=0.9997)  # Per-update decay
+        self.lr_actor = lr_actor
+        self.lr_critic = lr_critic
 
     def set_action_std(self, new_action_std):
         self.policy.set_action_std(new_action_std)
@@ -142,9 +150,19 @@ class PPOAgent:
             self.optimizer.zero_grad()
             loss.mean().backward()
             self.optimizer.step()
+        
+        # ADDED: Step the learning rate scheduler
+        self.scheduler.step()
             
         # Copy new weights into old policy
         self.policy_old.load_state_dict(self.policy.state_dict())
+    
+    def get_current_lr(self):
+        """Get current learning rates for logging"""
+        return {
+            'actor_lr': self.optimizer.param_groups[0]['lr'],
+            'critic_lr': self.optimizer.param_groups[1]['lr']
+        }
         
     def save(self, checkpoint_path):
         torch.save(self.policy_old.state_dict(), checkpoint_path)

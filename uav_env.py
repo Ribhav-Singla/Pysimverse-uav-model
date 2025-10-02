@@ -10,8 +10,8 @@ from datetime import datetime
 
 # Configuration from uav_render.py, adapted for the environment
 CONFIG = {
-    'start_pos': np.array([-4.0, -4.0, 1.0]),
-    'goal_pos': np.array([4.0, 4.0, 1.0]),
+    'start_pos': np.array([-3.0, -3.0, 1.0]),  # Default start position (will be updated dynamically)
+    'goal_pos': np.array([3.0, 3.0, 1.0]),     # Default goal position (will be updated dynamically)
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,  # Half of obstacle height
@@ -22,7 +22,7 @@ CONFIG = {
     'control_dt': 0.05,
     'max_steps': 50000,  # Max steps per episode
     'boundary_penalty': -100,  # Penalty for going out of bounds
-    'lidar_range': 2.8,  # LIDAR maximum detection range
+    'lidar_range': 2.9,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
     'step_reward': -0.01,    # Survival bonus per timestep
 }
@@ -81,18 +81,96 @@ class EnvironmentGenerator:
         return obstacles
 
     @staticmethod
+    def get_random_corner_position():
+        """Get a random start position from one of the four corners"""
+        half_world = CONFIG['world_size'] / 2 - 1.0  # 1m margin from boundary
+        corners = [
+            np.array([-half_world, -half_world, CONFIG['uav_flight_height']]),  # Bottom-left
+            np.array([half_world, -half_world, CONFIG['uav_flight_height']]),   # Bottom-right
+            np.array([-half_world, half_world, CONFIG['uav_flight_height']]),   # Top-left
+            np.array([half_world, half_world, CONFIG['uav_flight_height']])     # Top-right
+        ]
+        return random.choice(corners)
+    
+    @staticmethod
+    def get_random_goal_position():
+        """Get a random goal position anywhere in the map (not just corners)"""
+        half_world = CONFIG['world_size'] / 2 - 1.0  # 1m margin from boundary
+        x = random.uniform(-half_world, half_world)
+        y = random.uniform(-half_world, half_world)
+        return np.array([x, y, CONFIG['uav_flight_height']])
+    
+    @staticmethod
+    def check_position_safety(position, obstacles, safety_radius=0.8):
+        """Check if a position is safe from obstacles"""
+        for obs in obstacles:
+            obs_pos = np.array(obs['pos'])
+            distance = np.linalg.norm(position[:2] - obs_pos[:2])  # Only check horizontal distance
+            
+            if obs['shape'] == 'box':
+                # For box obstacles, consider the size
+                min_safe_distance = max(obs['size'][0], obs['size'][1]) + safety_radius
+            elif obs['shape'] == 'cylinder':
+                # For cylinder obstacles
+                min_safe_distance = obs['size'][0] + safety_radius
+            else:  # sphere
+                min_safe_distance = obs['size'][0] + safety_radius
+            
+            if distance < min_safe_distance:
+                return False
+        return True
+
+    @staticmethod
     def generate_curriculum_maps():
-        """Generate 20 maps each for obstacle counts 1-10"""
+        """Generate 50 maps each for obstacle counts 1-10 with versatile start/goal positions"""
         curriculum_maps = {}
         
         for obstacle_count in range(1, 11):  # 1 to 10 obstacles
             maps = []
-            for map_id in range(20):  # 20 maps per obstacle count
+            for map_id in range(50):  # 50 maps per obstacle count (increased from 20)
                 # Set random seed for reproducible map generation
-                random.seed(obstacle_count * 100 + map_id)
+                random.seed(obstacle_count * 1000 + map_id)
+                
+                # Generate obstacles first
                 obstacles = EnvironmentGenerator.generate_obstacles(obstacle_count)
+                
+                # Generate safe start and goal positions
+                max_attempts = 50
+                safety_radius = 0.8
+                
+                # Get random start position from corners
+                start_pos = None
+                for attempt in range(max_attempts):
+                    candidate_start = EnvironmentGenerator.get_random_corner_position()
+                    if EnvironmentGenerator.check_position_safety(candidate_start, obstacles, safety_radius):
+                        start_pos = candidate_start
+                        break
+                
+                # If no safe corner found, use default corner and warn
+                if start_pos is None:
+                    start_pos = np.array([-3.0, -3.0, 1.0])
+                    print(f"⚠️ Warning: Using default start position for map {obstacle_count}-{map_id}")
+                
+                # Get random goal position anywhere in map
+                goal_pos = None
+                for attempt in range(max_attempts):
+                    candidate_goal = EnvironmentGenerator.get_random_goal_position()
+                    # Ensure goal is not too close to start position
+                    start_goal_distance = np.linalg.norm(candidate_goal[:2] - start_pos[:2])
+                    if (EnvironmentGenerator.check_position_safety(candidate_goal, obstacles, safety_radius) and 
+                        start_goal_distance > 2.0):  # At least 2m apart
+                        goal_pos = candidate_goal
+                        break
+                
+                # If no safe goal found, use opposite corner from start
+                if goal_pos is None:
+                    goal_pos = np.array([3.0, 3.0, 1.0])
+                    print(f"⚠️ Warning: Using default goal position for map {obstacle_count}-{map_id}")
+                
                 maps.append({
                     'obstacles': obstacles,
+                    'start_pos': start_pos,
+                    'goal_pos': goal_pos,
                     'obstacle_count': obstacle_count,
                     'map_id': map_id
                 })
@@ -157,7 +235,10 @@ class UAVEnv(gym.Env):
             self.current_obstacle_level = 1
             self.current_map_pool = self.curriculum_maps[1]
             print(f"🎓 Curriculum Learning Initialized: Generated maps for obstacle levels 1-10")
-            print(f"   - 20 maps per obstacle level (200 total maps)")
+            print(f"   - 50 maps per obstacle level (500 total maps)")
+            print(f"   - Random start positions from corners")
+            print(f"   - Random goal positions anywhere in map")
+            print(f"   - Safe positioning with 0.8m obstacle clearance")
             print(f"   - Starting with obstacle level: {self.current_obstacle_level}")
         
         # Generate initial obstacles
@@ -167,12 +248,13 @@ class UAVEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
         
-        # Observation space: [pos(3), vel(3), goal_dist(3), lidar_readings(16)]
-        obs_dim = 3 + 3 + 3 + CONFIG['lidar_num_rays']
+        # Observation space: [pos(3), vel(3), goal_dist(3), lidar_readings(16), lidar_features(11)]
+        # LIDAR features: min, mean, closest_dir(2), danger_level, clearances(4), goal_alignment(2)
+        obs_dim = 3 + 3 + 3 + CONFIG['lidar_num_rays'] + 11
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         
         # Action space: 3D velocity control (vx, vy, vz=0) - no Z-axis movement
-        self.action_space = spaces.Box(low=-2.0, high=2.0, shape=(3,), dtype=np.float32)
+        self.action_space = spaces.Box(low=0, high=1.0, shape=(3,), dtype=np.float32)
         
         self.viewer = None
         self.step_count = 0
@@ -183,7 +265,40 @@ class UAVEnv(gym.Env):
         
         # Store previous velocity for trajectory change calculation
         self.prev_velocity = np.zeros(3)
+        
+        # Episode counter for adaptive thresholds
+        self.current_episode = 0
+        
+        # Goal stabilization tracking
+        self.goal_reached = False
+        self.goal_stabilization_steps = 0
+        self.goal_hold_duration = 50  # Steps to hold at goal before episode ends (more steps for better stabilization)
 
+    def _get_velocity_limits(self):
+        """Get adaptive velocity limits based on training progress (velocity curriculum)"""
+        episode = self.current_episode
+        
+        # EVEN MORE CONSERVATIVE velocity curriculum (very slow start)
+        # This helps agent learn proper direction before moving quickly
+        if episode < 100:
+            return 0.05, 0.2   # SUPER SLOW: Nearly stationary for initial learning
+        elif episode < 300:
+            return 0.05, 0.3   # Very slow
+        elif episode < 500:
+            return 0.08, 0.4   # Still slow but slightly faster
+        elif episode < 1000:
+            return 0.1, 0.5    # Min: 0.1 m/s, Max: 0.5 m/s (SLOW - learning phase)
+        elif episode < 1500:
+            return 0.12, 0.7   # Gradually increasing
+        elif episode < 2000:
+            return 0.15, 0.9   # Min: 0.15 m/s, Max: 0.9 m/s
+        elif episode < 3000:
+            return 0.2, 1.2    # Min: 0.2 m/s, Max: 1.2 m/s
+        elif episode < 4000:
+            return 0.25, 1.5   # Min: 0.25 m/s, Max: 1.5 m/s
+        else:
+            return 0.3, 2.0    # Min: 0.3 m/s, Max: 2.0 m/s (FULL SPEED)
+    
     def step(self, action):
         # Store previous velocity for trajectory change calculation
         self.prev_velocity = self.data.qvel[:3].copy()
@@ -194,10 +309,91 @@ class UAVEnv(gym.Env):
             action = action.numpy()
         action = np.array(action).flatten()
         
-        # Apply velocity control with constant height
-        self.data.qvel[0] = float(action[0])  # X velocity
-        self.data.qvel[1] = float(action[1])  # Y velocity  
-        self.data.qvel[2] = 0.0               # Z velocity = 0 (no vertical movement)
+        # Add goal-directed bias to action in early training
+        # This helps the agent initially learn to move toward goal
+        if self.current_episode < 200:  # Only in early training
+            pos = self.data.qpos[:3]
+            goal_vector = CONFIG['goal_pos'] - pos
+            goal_direction = goal_vector / (np.linalg.norm(goal_vector) + 1e-8)  # Normalized goal direction
+            
+            # Blend action with goal direction (50% agent action, 50% goal bias)
+            bias_strength = max(0, (200 - self.current_episode) / 200)  # Fade out bias over first 200 episodes
+            action[:2] = (1 - bias_strength * 0.5) * action[:2] + (bias_strength * 0.5) * goal_direction[:2]
+        
+        # VELOCITY CURRICULUM: Get current velocity limits
+        min_vel, max_vel = self._get_velocity_limits()
+        
+        # Apply velocity control with GRADUAL ACCELERATION
+        # Instead of directly setting velocity from action, we gradually adjust it
+        current_vel = self.data.qvel[:2].copy()
+        target_vel = action[:2]  # Desired velocity from action
+        
+        # ANTI-WESTWARD BIAS: Special case for western boundary problems
+        # If agent is trying to move west (negative X), reduce that component significantly
+        # This helps prevent the boundary issues we're seeing
+        if target_vel[0] < 0 and self.current_episode < 500:
+            target_vel[0] *= 0.5  # Reduce westward velocity by 50%
+        
+        # Limit target velocity magnitude
+        target_speed = np.linalg.norm(target_vel)
+        if target_speed > max_vel:
+            target_vel = (target_vel / target_speed) * max_vel
+        elif target_speed < min_vel and target_speed > 0:
+            target_vel = (target_vel / target_speed) * min_vel
+        
+        # GRADUAL ACCELERATION: Smoothly transition from current to target velocity
+        acceleration_rate = 0.2  # REDUCED: How quickly to change velocity (0-1)
+        new_vel = current_vel + acceleration_rate * (target_vel - current_vel)
+        
+        # Check if UAV is at goal position BEFORE applying velocity
+        pos = self.data.qpos[:3]
+        goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
+        
+        # GOAL STABILIZATION: If UAV reaches goal, apply strong braking to keep it there
+        if goal_dist < 0.5:  # Same threshold as reward function
+            if not self.goal_reached:
+                print(f"🎯 GOAL REACHED! Stabilizing UAV at goal position...")
+                self.goal_reached = True
+                self.goal_stabilization_steps = 0
+            
+            # Apply VERY strong braking forces to LOCK UAV at goal
+            goal_vector = CONFIG['goal_pos'] - pos
+            
+            # Check if we're very close to goal center (within 0.1m)
+            if goal_dist < 0.1:
+                # LOCK MODE: Virtually stop all movement
+                # Apply extremely strong velocity damping (99% reduction)
+                stabilization_vel = -self.data.qvel[:2] * 0.99
+                
+                # Add tiny position correction to keep centered
+                stabilization_vel += goal_vector[:2] * 5.0
+            else:
+                # APPROACH MODE: Strong position correction with damping
+                position_correction = goal_vector[:2] * 3.0  # Very strong pull toward goal
+                
+                # Strong velocity damping to eliminate momentum
+                velocity_damping = -self.data.qvel[:2] * 0.9  # Reduce current velocity by 90%
+                
+                # Combine corrections with priority on stopping motion
+                stabilization_vel = position_correction + velocity_damping
+            
+            # Limit stabilization velocity to prevent overshooting
+            stabilization_speed = np.linalg.norm(stabilization_vel)
+            max_stabilization_speed = 0.2 if goal_dist < 0.1 else 0.4
+            if stabilization_speed > max_stabilization_speed:
+                stabilization_vel = (stabilization_vel / stabilization_speed) * max_stabilization_speed
+            
+            # Apply stabilization velocity instead of action-based velocity
+            self.data.qvel[0] = float(stabilization_vel[0])
+            self.data.qvel[1] = float(stabilization_vel[1])
+            self.data.qvel[2] = 0.0
+            
+            self.goal_stabilization_steps += 1
+        else:
+            # Normal velocity control when not at goal
+            self.data.qvel[0] = float(new_vel[0])  # X velocity
+            self.data.qvel[1] = float(new_vel[1])  # Y velocity
+            self.data.qvel[2] = 0.0                # Z velocity = 0 (no vertical movement)
         
         # Maintain constant height
         self.data.qpos[2] = CONFIG['uav_flight_height']
@@ -205,13 +401,14 @@ class UAVEnv(gym.Env):
         mujoco.mj_step(self.model, self.data)
         self.step_count += 1
 
-        # Enforce horizontal velocity constraints only
+        # Enforce velocity constraints (with curriculum limits)
         vel_xy = self.data.qvel[:2]
         speed_xy = np.linalg.norm(vel_xy)
-        if speed_xy < 0.3:
-            self.data.qvel[:2] = (vel_xy / speed_xy) * 0.3 if speed_xy > 0 else np.zeros(2)
-        elif speed_xy > 2.0:
-            self.data.qvel[:2] = (vel_xy / speed_xy) * 2.0
+        
+        if speed_xy < min_vel and speed_xy > 0:
+            self.data.qvel[:2] = (vel_xy / speed_xy) * min_vel
+        elif speed_xy > max_vel:
+            self.data.qvel[:2] = (vel_xy / speed_xy) * max_vel
         
         # Always ensure Z position stays constant
         self.data.qpos[2] = CONFIG['uav_flight_height']
@@ -258,6 +455,10 @@ class UAVEnv(gym.Env):
             'out_of_bounds': False
         }
         
+        # Reset goal stabilization tracking
+        self.goal_reached = False
+        self.goal_stabilization_steps = 0
+        
         # Regenerate obstacles for each episode
         if self.curriculum_learning:
             self.load_curriculum_map()
@@ -270,6 +471,13 @@ class UAVEnv(gym.Env):
         
         # Set initial position again after model reload
         self.data.qpos[:3] = CONFIG['start_pos']
+        
+        # INITIALIZE WITH SMALL POSITIVE X VELOCITY to avoid early westward movement
+        if self.current_episode < 300:  # Only for early training
+            # Small initial eastward velocity (will help avoid immediate west boundary issues)
+            self.data.qvel[0] = 0.05  # Small positive X velocity (eastward)
+            self.data.qvel[1] = 0.0   # No Y velocity
+            self.data.qvel[2] = 0.0   # No Z velocity
         self.data.qpos[2] = CONFIG['uav_flight_height']
         
         # Initialize previous goal distance
@@ -289,14 +497,16 @@ class UAVEnv(gym.Env):
     
     def _get_random_goal_position(self):
         """Select a random goal position from the three available corners (excluding start position)"""
-        # Define the four corners of the world
+        # Define the four corners of the world with LARGER SAFETY MARGIN
         half_world = CONFIG['world_size'] / 2
+        safety_margin = 1.0  # INCREASED: Keep 1.0m away from boundary
+        
         corners = [
-            np.array([half_world, half_world, CONFIG['uav_flight_height']]),    # Top-right
-            np.array([half_world, -half_world, CONFIG['uav_flight_height']]),   # Bottom-right
-            np.array([-half_world, half_world, CONFIG['uav_flight_height']])    # Top-left
+            np.array([half_world - safety_margin, half_world - safety_margin, CONFIG['uav_flight_height']]),    # Top-right [3, 3]
+            np.array([half_world - safety_margin, -half_world + safety_margin, CONFIG['uav_flight_height']]),   # Bottom-right [3, -3]
+            np.array([-half_world + safety_margin, half_world - safety_margin, CONFIG['uav_flight_height']])    # Top-left [-3, 3]
         ]
-        # Start position is bottom-left: [-half_world, -half_world, height]
+        # Start position is bottom-left: [-3, -3, 1.0]
         # So we exclude it and randomly select from the other three corners
         return random.choice(corners)
     
@@ -430,12 +640,19 @@ class UAVEnv(gym.Env):
         # Select random map from current level
         selected_map = random.choice(self.current_map_pool)
         self.obstacles = selected_map['obstacles']
+        
+        # Update CONFIG with map-specific start and goal positions
+        CONFIG['start_pos'] = selected_map['start_pos'].copy()
+        CONFIG['goal_pos'] = selected_map['goal_pos'].copy()
+        
         self.current_map_info = {
             'obstacle_count': selected_map['obstacle_count'],
-            'map_id': selected_map['map_id']
+            'map_id': selected_map['map_id'],
+            'start_pos': selected_map['start_pos'].copy(),
+            'goal_pos': selected_map['goal_pos'].copy()
         }
         
-        # Create XML with selected obstacles
+        # Create XML with selected obstacles and positions
         EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
     
     def get_curriculum_info(self):
@@ -454,13 +671,57 @@ class UAVEnv(gym.Env):
         vel = self.data.qvel[:3]
         goal_dist = CONFIG['goal_pos'] - pos
         
-        # Get LIDAR readings
+        # Get LIDAR readings (normalized to [0, 1])
         lidar_readings = self._get_lidar_readings(pos)
-            
-        return np.concatenate([pos, vel, goal_dist, lidar_readings])
+        
+        # === LIDAR FEATURE ENGINEERING ===
+        # Extract meaningful features from raw LIDAR data
+        
+        # 1. Minimum distance (closest obstacle)
+        min_lidar = np.min(lidar_readings)
+        
+        # 2. Mean distance (overall clearance)
+        mean_lidar = np.mean(lidar_readings)
+        
+        # 3. Direction to closest obstacle (unit vector)
+        closest_idx = np.argmin(lidar_readings)
+        closest_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays']
+        obstacle_direction = np.array([np.cos(closest_angle), np.sin(closest_angle)])
+        
+        # 4. Danger level (ratio of close obstacles)
+        danger_threshold = 0.36  # 1.0m / 2.8m normalized
+        num_close_obstacles = np.sum(lidar_readings < danger_threshold)
+        danger_level = num_close_obstacles / CONFIG['lidar_num_rays']
+        
+        # 5. Directional clearance (front/right/back/left sectors)
+        sector_size = len(lidar_readings) // 4
+        front_clear = np.mean(lidar_readings[0:sector_size])
+        right_clear = np.mean(lidar_readings[sector_size:2*sector_size])
+        back_clear = np.mean(lidar_readings[2*sector_size:3*sector_size])
+        left_clear = np.mean(lidar_readings[3*sector_size:4*sector_size])
+        
+        # 6. Goal direction alignment (unit vector toward goal)
+        goal_direction_norm = goal_dist[:2] / (np.linalg.norm(goal_dist[:2]) + 1e-8)
+        
+        # Combine all LIDAR features (11 dimensions)
+        lidar_features = np.array([
+            min_lidar,                    # 1D
+            mean_lidar,                   # 1D
+            obstacle_direction[0],        # 1D
+            obstacle_direction[1],        # 1D
+            danger_level,                 # 1D
+            front_clear,                  # 1D
+            right_clear,                  # 1D
+            back_clear,                   # 1D
+            left_clear,                   # 1D
+            goal_direction_norm[0],       # 1D
+            goal_direction_norm[1]        # 1D
+        ])
+        
+        return np.concatenate([pos, vel, goal_dist, lidar_readings, lidar_features])
 
     def _get_lidar_readings(self, pos):
-        """Generate LIDAR readings in 360 degrees around the UAV"""
+        """Generate LIDAR readings in 360 degrees around the UAV (normalized to [0,1])"""
         lidar_readings = []
         
         # Define obstacle detection threshold (distance at which we consider obstacle "detected")
@@ -507,7 +768,9 @@ class UAVEnv(gym.Env):
                     new_vel=current_vel
                 )
             
-            lidar_readings.append(min_distance)
+            # Normalize LIDAR reading to [0, 1] range
+            normalized_distance = min_distance / CONFIG['lidar_range']
+            lidar_readings.append(normalized_distance)
         
         return np.array(lidar_readings)
 
@@ -583,6 +846,11 @@ class UAVEnv(gym.Env):
         vel = obs[3:6]
         goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
         
+        # Extract LIDAR readings (normalized, indices 9:25)
+        lidar_readings = obs[9:25]
+        min_obstacle_dist_norm = np.min(lidar_readings)
+        min_obstacle_dist = min_obstacle_dist_norm * CONFIG['lidar_range']  # Convert back to meters
+        
         # Initialize termination info
         termination_info = {
             'terminated': False,
@@ -595,12 +863,14 @@ class UAVEnv(gym.Env):
             'final_velocity': np.linalg.norm(vel[:2])  # Only horizontal velocity
         }
         
-        # Survival bonus
-        reward = CONFIG.get('step_reward', 0.01)
+        # Initialize reward
+        reward = 0.0
+        
+        # === TERMINAL REWARDS (Strong Signals) ===
         
         # Check if UAV is out of bounds
         if self._check_out_of_bounds(pos):
-            reward = CONFIG['boundary_penalty']  # -10 penalty
+            reward = -100  # Strong penalty
             termination_info['terminated'] = True
             termination_info['termination_reason'] = 'out_of_bounds'
             termination_info['out_of_bounds'] = True
@@ -608,38 +878,77 @@ class UAVEnv(gym.Env):
         
         # Check for collision with obstacles
         if self._check_collision(pos):
-            reward = -100
+            reward = -100  # Strong penalty
             termination_info['terminated'] = True
             termination_info['termination_reason'] = 'collision'
             termination_info['collision_detected'] = True
             return reward, termination_info
             
-        # Check if goal is reached
+        # Check if goal is reached and stabilized
         if goal_dist < 0.5:
-            reward = 100
-            termination_info['terminated'] = True
-            termination_info['termination_reason'] = 'goal_reached'
-            return reward, termination_info
+            if not self.goal_reached:
+                # First time reaching goal - give large reward but don't terminate yet
+                reward = 500  # Large reward for reaching goal
+                self.goal_reached = True
+                self.goal_stabilization_steps = 0
+            else:
+                # UAV is stabilizing at goal - give smaller continuous rewards
+                reward = 50  # Reward for staying at goal
+                
+                # Check if UAV has been stable at goal long enough
+                if self.goal_stabilization_steps >= self.goal_hold_duration:
+                    # Final bonus for successful goal stabilization
+                    reward += 500  # Bonus for successful stabilization
+                    termination_info['terminated'] = True
+                    termination_info['termination_reason'] = 'goal_reached_and_stabilized'
+                    print(f"✅ GOAL SUCCESSFULLY REACHED AND STABILIZED! ({self.goal_stabilization_steps} steps)")
+                    return reward, termination_info
+                elif goal_dist > 1.0:  # If UAV moves too far from goal during stabilization
+                    reward = -200  # Penalty for leaving goal area
+                    self.goal_reached = False  # Reset goal reached status
+                    self.goal_stabilization_steps = 0
+                    print(f"⚠️  UAV left goal area during stabilization. Resetting...")
+        else:
+            # Reset goal status if UAV is not near goal
+            if self.goal_reached and goal_dist > 1.0:
+                self.goal_reached = False
+                self.goal_stabilization_steps = 0
         
-        # Reward for moving towards the goal (only horizontal movement)
-        goal_direction = (CONFIG['goal_pos'] - pos)[:2]  # Only X,Y components
-        vel_horizontal = vel[:2]
-        if np.dot(vel_horizontal, goal_direction) > 0:
-            reward += 0.1 * np.dot(vel_horizontal, goal_direction) / np.linalg.norm(goal_direction)
-
-        # Distance-based reward (closer to goal = higher reward)
-        reward += max(0, (8.0 - goal_dist) / 80.0)  # Scale to small positive value
+        # === STEP REWARDS (Simplified) ===
         
-        # --- Relative Reward based on Proximity ---
-        # Reward for making progress towards the goal
+        # 1. Progress reward (primary driving force)
         progress = self.prev_goal_dist - goal_dist
-        progress_reward = 2.0 * progress  # Scale the reward
+        reward = 10.0 * progress  # Scaled up for significance
         
-        # Increase reward when close to the goal
-        if goal_dist < 3:  # Proximity threshold of 3m
-            progress_reward *= 1.2
+        # 2. Add directional bias to encourage eastward movement if goal is eastward
+        goal_vector = CONFIG['goal_pos'] - pos
+        if goal_vector[0] > 0:  # If goal is to the east
+            # Add a strong bias for eastward movement
+            reward += 2.0 * max(0, self.data.qvel[0])  # Reward positive x velocity
             
-        reward += progress_reward
+            # Add stronger penalty for westward movement (going the wrong way)
+            if self.data.qvel[0] < 0:  # If moving westward
+                reward -= 5.0 * abs(self.data.qvel[0])  # Penalize negative x velocity
+        
+        # 3. Boundary awareness - add extra penalty when getting close to boundaries
+        half_world = CONFIG['world_size'] / 2
+        x_distance_to_west_boundary = abs(pos[0] + half_world)  # Distance to west boundary
+        if x_distance_to_west_boundary < 1.0:  # Getting close to western boundary
+            reward -= (1.0 - x_distance_to_west_boundary) * 10.0  # Stronger penalty closer to boundary
+        
+        # 4. LIDAR-based proximity penalties (collision avoidance)
+        if min_obstacle_dist < 0.3:
+            reward -= 5.0  # Very dangerous - strong penalty
+        elif min_obstacle_dist < 0.5:
+            reward -= 2.0  # Dangerous - moderate penalty
+        elif min_obstacle_dist < 1.0:
+            reward -= 0.5  # Caution zone - mild penalty
+        
+        # 3. Safe navigation bonus (reward for good behavior)
+        if min_obstacle_dist > 1.5 and progress > 0:
+            reward += 0.5  # Bonus for maintaining safe distance while progressing
+        
+        # Update previous goal distance for next step
         self.prev_goal_dist = goal_dist
         
         return reward, termination_info
@@ -647,12 +956,36 @@ class UAVEnv(gym.Env):
     def _check_out_of_bounds(self, pos):
         """Check if UAV position is outside the world boundaries"""
         half_world = CONFIG['world_size'] / 2
-        return (abs(pos[0]) > half_world or 
-                abs(pos[1]) > half_world or 
+        boundary_tolerance = 0.05  # REDUCED: Stricter tolerance for numerical errors
+        
+        # Create a smaller effective boundary to prevent getting too close to edges
+        effective_boundary = half_world - 0.1
+        
+        # Apply strictest check to western boundary (x negative) where we have problems
+        western_boundary = -half_world + 0.2  # Even stricter western boundary
+        
+        return (pos[0] < western_boundary or  # Stricter western boundary
+                pos[0] > effective_boundary or 
+                abs(pos[1]) > effective_boundary or 
                 pos[2] < 0.5 or   # Too low (but shouldn't happen with constant height)
                 pos[2] > 1.5)     # Too high (but shouldn't happen with constant height)
 
+    def _get_collision_threshold(self):
+        """Get adaptive collision threshold based on training progress (curriculum)"""
+        episode = self.current_episode
+        
+        if episode < 500:
+            return 0.15  # Lenient early training
+        elif episode < 1500:
+            return 0.13  # Moderate
+        elif episode < 3000:
+            return 0.11  # Getting stricter
+        else:
+            return 0.10  # Final strict threshold
+
     def _check_collision(self, uav_pos):
+        collision_threshold = self._get_collision_threshold()
+        
         for obs in self.obstacles:
             obs_pos = np.array(obs['pos'])
             if obs['shape'] == 'box':
@@ -665,7 +998,7 @@ class UAVEnv(gym.Env):
                 vertical_dist = abs(uav_pos[2] - obs_pos[2])
                 distance = max(horizontal_dist - obs['size'][0], vertical_dist - obs['size'][1])
             
-            if distance < CONFIG['collision_distance']:
+            if distance < collision_threshold:
                 return True
         return False
 

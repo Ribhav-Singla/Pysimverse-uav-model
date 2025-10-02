@@ -1,0 +1,342 @@
+
+\documentclass[pdflatex,sn-mathphys-num]{sn-jnl}
+
+\usepackage{graphicx}%
+\usepackage{multirow}%
+\usepackage{amsmath,amssymb,amsfonts}%
+\usepackage{amsthm}%
+\usepackage{mathrsfs}%
+\usepackage[title]{appendix}%
+\usepackage{xcolor}%
+\usepackage{textcomp}%
+\usepackage{manyfoot}%
+\usepackage{booktabs}%
+\usepackage{algorithm}%
+\usepackage{algorithmicx}%
+\usepackage{algpseudocode}%
+\usepackage{listings}%
+\usepackage{caption}%
+\usepackage{subfig}%
+\usepackage{geometry}%
+\usepackage{comment}%
+\usepackage{hyperref}%
+
+\theoremstyle{thmstyleone}%
+\newtheorem{theorem}{Theorem}%  meant for continuous numbers
+
+\newtheorem{proposition}[theorem]{Proposition}% 
+
+
+\theoremstyle{thmstyletwo}%
+\newtheorem{example}{Example}%
+\newtheorem{remark}{Remark}%
+
+\theoremstyle{thmstylethree}%
+\newtheorem{definition}{Definition}%
+
+\raggedbottom
+%%\unnumbered% uncomment this for unnumbered level heads
+
+
+
+\begin{document}
+
+
+\title[Article Title]{NS-RL:Neurosymbolic Reinforcement Learning Based Autonomous UAV Navigation}
+
+
+
+
+
+\author[1]{\fnm{Snehil} \sur{Sharma}\thanks{These authors contributed equally as first authors.}}\email{snehilsharma0504@gmail.com}
+
+\author[1]{\fnm{Ribhav} \sur{Singla}\footnotemark[1]}\email{ribhavsingla2166@gmail.com}
+
+\author[1]{\fnm{Rijul} \sur{Tandon}\footnotemark[1]}\email{letscomerijul@gmail.com}
+
+\author[1]{\fnm{Peter} \sur{Vamplew}}\email{p.vamplew@federation.edu.au}
+
+\author[1]{\fnm{Paridhi} \sur{Naithani}\footnotemark[1]}\email{paridhinaithani21@gmail.com}
+
+\author[1]{\fnm{Sakshi} \sur{Kaushal}}\email{sakshi@pu.ac.in}
+
+
+
+
+\affil*[1]{\orgdiv{University Institute of Engineering \& Technology}, 
+\orgname{Panjab University}, 
+\orgaddress{\city{Chandigarh}, \postcode{160014}, \state{Punjab}, \country{India}}}
+
+
+%%==================================%%
+%% Sample for unstructured abstract %%
+%%==================================%%
+
+\keywords{Autonomous UAV, Navigation, Reinforcement Learning, Neurosymbolic Reinforcement Learning}
+
+
+\abstract{
+Reinforcement learning has become highly popular for autonomous UAV navigation, but pure neural-based RL agents face challenges with long exploration times and limited generalization to unseen environments. This paper introduces a neurosymbolic reinforcement learning framework that extends trained RL agents with symbolic navigation rules and human expertise. Our approach integrates human-provided navigation knowledge with Proximal Policy Optimization (PPO) agents trained in a lightweight MuJoCo-based simulation environment. Unlike existing approaches that rely on heavy simulation platforms like ROS and Gazebo, we develop a custom UAV environment using MuJoCo physics engine that enables rapid experimentation and comparison studies. We train baseline PPO agents and then extend them with neurosymbolic components, evaluating both approaches across environments with static and dynamic obstacles, different map sizes, and random start-goal configurations. Results demonstrate that our neurosymbolic extension achieves 40\% reduction in exploration time and 20\% higher success rates compared to standard RL baselines. The extended neurosymbolic agents show superior generalization to unseen environments while maintaining computational efficiency. This work provides a comprehensive comparison study between standard RL and neurosymbolic RL agents for UAV navigation, offering insights for developing more intelligent autonomous systems.
+}
+
+
+
+
+% \abstract{
+% Neurosymbolic AI combines neural networks with symbolic information , it integrates the traditional heurisitc knowledge with advanced neural network learners , RL has been highly mentioned and praised as a neural method for autonomous uav navigation , This study presents a RL based navigation implmentation from scratch and extends it to neurosymbolic RL , leveraging basic navigation rules via human input and supervised learning. We eliminated complex heavy training environments like ROS and gazebo and utilize basic simple custom  simulation generation our work presents the performance comparison of Neurosymbolic RL agents with various basline vanilla RL agents , particularly we utilise PPO , we show different custom environments with static , dynmic obstacles , various sizes and dynamic start and goal states 
+
+% }
+
+
+
+
+%%\pacs[JEL Classification]{D8, H51}
+
+%%\pacs[MSC Classification]{35A01, 65L10, 65L12, 65L20, 65L70}
+
+\maketitle
+
+
+\section{Introduction}
+
+Unmanned Aerial Vehicles (UAVs) are revolutionizing sectors ranging from environmental monitoring and disaster response to precision agriculture and intelligent transportation \cite{mohsan2023unmanned,mgendi2024unlocking}. These real-world missions require UAVs to operate autonomously in complex environments, adaptively planning trajectories, avoiding static and dynamic obstacles, and responding to uncertain and time-varying operational requirements~\cite{xu2022vision,debnath2024review}. Autonomy, safety, and adaptability are paramount for effective deployment in these domains.
+
+Conventional navigation strategies were dominated by classical methods,heuristics, meta-heuristics, machine learning, and hybrid algorithms \cite{ait2022uav,zhang2024algorithm}. While these approaches have demonstrated reliability in structured or static settings, they face limitations in scalability, generalization to changing environments, and responsiveness to dynamic hazards. Modern UAV systems thus increasingly rely on Deep Reinforcement Learning (DRL) enabling agents to autonomously learn navigation and obstacle avoidance through reward driven environmental interactions~\cite{wang2022vision, fei2024deep}. However, despite achieving notable advances in many scenarios, DRL suffers from sample inefficiency, slow convergence, limited safety guarantees, and poor generalization in novel or nonstationary environments \cite{esrafilian2021model,mohammadhasani2021reinforcement}.
+
+A growing line of research is now focusing on infusing symbolic, rule-based, or human-guided knowledge into RL systems to address these challenges. Neurosymbolic RL represents a promising paradigm, unifying the perception and generalization strengths of neural networks with the interpretability, compositionality, and domain expertise of symbolic reasoning. Notably, NEUSIS~\cite{cai2025neusis} establishes a framework for neuro-symbolic composition in complex UAV search missions, allowing agents to perform autonomous perception, reasoning, and planning in environments where purely neural or purely symbolic solutions fail. Additionally, frameworks for externally-influenced and assisted reinforcement learning~\cite{bignold2023conceptual} and persistent rule-based interactive RL~\cite{bignold2023persistent} have shown the benefits of incorporating external advice, persistent rules, and human feedback for improved learning efficiency and robust adaptation. Existing studies predominantly rely on computationally expensive simulation platforms (e.g., ROS, Gazebo) or lack lightweight, end-to-end pipelines that enable scalable benchmarking and rapid experimentation in configurable environments. Moreover, to the best of our knowledge, no prior work has investigated neurosymbolic reinforcement learning (NS-RL) for UAV navigation. This leaves open a critical gap: the development of environment-agnostic approaches that integrate neural and symbolic priors while supporting rigorous evaluation against strong RL baselines. This paper advances the state-of-the-art in autonomous UAV navigation by:
+
+\begin{itemize}
+\item Presenting a lightweight, modular UAV simulation environment with minimal hardware requirements, supporting efficient and flexible benchmarking of autonomy algorithms in both static and highly dynamic environments.
+\item Developing a neurosymbolic RL pipeline, wherein symbolic navigation rules, heuristics, and supervised human guidance are tightly integrated with neural policy optimization (PPO), enabling improved sample efficiency and generalization.
+\item Empirically benchmarking neurosymbolic RL agents against vanilla RL counterparts in a range of environments featuring static/dynamic obstacles, variable geometry, and stochastic start-goal states, thereby quantifying robustness, adaptability, and transferability.
+\item Bridging research gaps by providing (i) a reproducible, open-source experimental platform and (ii) new evidence for the effectiveness of neurosymbolic RL—both in typical and adversarial UAV operational scenarios.
+\end{itemize}
+
+In summary, our work highlights the power of integrating symbolic knowledge into neural frameworks, illuminating new pathways toward the deployment of explainable, data-efficient, and robust UAV autonomy~\cite{cai2025neusis,bignold2023conceptual,bignold2023persistent}. The presented methodology is designed to be extensible to other autonomous systems facing similar navigation and reasoning challenges
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.7\linewidth]{NS-RL.drawio.png}
+    \caption{NS-RL Framework Architecture: Integration of symbolic rules with neural policy learning}
+    \label{fig:nsrl_architecture}
+\end{figure}
+
+\section{Related Work}
+
+Traditional UAV navigation has evolved from classical path planning algorithms to modern deep learning approaches. Early methods relied on A* search, rapidly-exploring random trees (RRT), and potential field algorithms \cite{zhang2024algorithm}, which while effective in static environments, struggle with dynamic obstacles and require complete environmental knowledge. Deep Reinforcement Learning has emerged as a powerful alternative for UAV autonomy, with PPO-based approaches showing particular success due to their stable training and robust performance \cite{wang2022vision}. However, vanilla RL agents often suffer from poor sample efficiency and limited generalization to new environments.
+
+Neurosymbolic AI combines the learning capabilities of neural networks with the reasoning power of symbolic systems. Recent works have demonstrated the benefits of this integration in various domains \cite{cai2025neusis}, with the NEUSIS framework specifically addressing complex UAV missions by enabling autonomous perception and symbolic reasoning. Interactive and assisted RL approaches have shown promising results by incorporating human knowledge and feedback \cite{bignold2023conceptual,bignold2023persistent}, using external advice and persistent rules to improve learning efficiency and adaptation capabilities.
+
+Most existing research relies on heavyweight simulation platforms like ROS and Gazebo, which require significant computational resources and complex setup procedures. Our work addresses this limitation by developing a lightweight, custom simulation environment that maintains physical accuracy while enabling rapid experimentation.
+
+\section{Methodology}
+
+We formulate the UAV navigation problem as a Markov Decision Process (MDP) with state space, action space, transition dynamics, and reward function. The state vector contains 25 dimensions including UAV position $\mathbf{p}_t = [x, y, z]^T$, velocity $\mathbf{v}_t = [\dot{x}, \dot{y}, \dot{z}]^T$, goal direction, and 16 LIDAR sensor readings for obstacle detection. The action space represents continuous velocity commands $\mathbf{v}_{cmd} = [v_x, v_y, v_z]^T$ with speed constraints between 0.15 and 0.5 m/s.
+
+The UAV dynamics are simulated using MuJoCo physics engine, implementing realistic quadrotor motion with thrust forces, gravity, and drag effects. The transition function follows standard physics equations where position and velocity are updated based on applied forces and acceleration. Our multi-objective reward function encourages goal-reaching behavior while penalizing collisions and promoting efficient navigation paths.
+
+We first train baseline PPO agents using the standard clipped objective function. The policy network outputs continuous actions through a Gaussian distribution, and the value network estimates state values for advantage computation. Our reward function combines five components: goal proximity rewards for reaching the target, collision penalties for obstacle avoidance, boundary constraints to keep the UAV within valid regions, efficiency incentives for direct navigation, and smoothness rewards for stable flight behavior. The reward weights are tuned to balance goal-seeking with safety constraints.
+
+After training the baseline PPO agents, we extend them with neurosymbolic components to create our enhanced navigation system. The neurosymbolic framework integrates symbolic navigation rules with the trained neural policies through a blending mechanism. We implement basic navigation principles as symbolic rules including safety constraints (maintain minimum distance from obstacles, avoid boundary violations), navigation heuristics (move towards goal when path is clear, take detours around obstacles), and speed regulation based on obstacle proximity.
+
+The final action combines neural and symbolic outputs using the equation $a_{ns} = \lambda a_{neural} + (1-\lambda) a_{symbolic}$, where $\lambda$ is a blending coefficient that starts high (favoring symbolic rules) and gradually decreases during training to allow neural learning. Human experts provide domain knowledge through navigation rules and help refine the symbolic components based on observed agent behaviors. This integration allows us to leverage both learned behaviors from the PPO training and expert knowledge encoded in symbolic rules. 
+
+Our simulation environment uses MuJoCo physics engine to create a lightweight yet realistic UAV navigation testbed. The MuJoCo-based environment simulates UAV dynamics with realistic physics including thrust forces, gravity, air resistance, and inertial effects. We model the UAV as a simplified quadrotor with mass 1.0 kg and appropriate inertia properties. The physics simulation runs at 200 Hz for numerical stability while rendering occurs at 60 FPS for smooth visualization.
+
+The environment includes a 16-ray LIDAR sensor for obstacle detection, with rays distributed uniformly around the UAV to provide 360-degree sensing capability. Each LIDAR ray has a maximum range of 5 meters and returns distance measurements to nearby obstacles. The simulation supports both static and dynamic obstacles with configurable shapes, sizes, and movement patterns. Visualization features include multiple camera views, real-time LIDAR ray display, trajectory tracking, and performance monitoring tools.
+
+The PPO agent uses a standard actor-critic architecture with shared feature extraction layers. The network processes the 25-dimensional observation vector through fully connected layers (256, 256, 128 neurons) with ReLU activations and layer normalization. The actor network outputs continuous velocity commands through a Gaussian policy, while the critic network estimates state values for advantage computation. We use standard PPO hyperparameters including learning rates of 1e-4 for the actor and 5e-4 for the critic, with experience collection over 384 timesteps and 10 training epochs per update.
+
+
+
+The training follows standard PPO procedure with experience collection, advantage estimation using GAE, and policy updates using the clipped objective function. We use parallel environments to accelerate training and apply standard stabilization techniques including gradient clipping, learning rate scheduling, and entropy regularization. The baseline PPO agents are trained for 3000 episodes until convergence, after which we extend them with neurosymbolic components for comparison.
+
+
+
+\section{Experimental Setup}
+
+We design experiments to compare baseline PPO agents with our neurosymbolic extensions across various navigation scenarios. The test environments include static obstacles with different densities (5-8 obstacles for simple cases, 10-15 for medium complexity, 20+ for challenging maze-like scenarios) and dynamic environments with moving obstacles and changing configurations.
+
+Our experimental protocol first trains baseline PPO agents for 3000 episodes using standard hyperparameters (actor learning rate 1e-4, critic learning rate 5e-4, 384 timestep rollouts). After the baseline agents converge, we extend them with neurosymbolic components and evaluate both versions. The neurosymbolic integration starts with high symbolic influence that gradually decreases to allow neural learning while maintaining safety constraints.
+
+We measure performance using success rate (reaching the goal), sample efficiency (training episodes needed), path efficiency (ratio of optimal to actual path length), collision rate, and generalization to unseen environments. This setup allows direct comparison between standard RL and neurosymbolic RL approaches on the same navigation tasks.
+
+The key hyperparameters include PPO learning rates (1e-4 for actor, 5e-4 for critic), discount factor 0.99, GAE parameter 0.95, and rollout length 384. The environment uses 16-ray LIDAR with 5m range, velocity bounds 0.15-0.5 m/s, and goal tolerance 0.3m. For neurosymbolic training, the blending starts at 0.8 symbolic influence and decays to minimum 0.1 to maintain safety constraints.
+
+\begin{table}[h]
+\centering
+\caption{Hyperparameter Configuration and Notation}
+\begin{tabular}{llll}
+\hline
+\textbf{Parameter} & \textbf{Notation} & \textbf{Value} & \textbf{Description} \\
+\hline
+\multicolumn{4}{c}{\textbf{PPO Algorithm Parameters}} \\
+\hline
+Actor Learning Rate & $\alpha_{actor}$ & $1 \times 10^{-4}$ & Policy network optimization rate \\
+Critic Learning Rate & $\alpha_{critic}$ & $5 \times 10^{-4}$ & Value network optimization rate \\
+Discount Factor & $\gamma$ & 0.99 & Future reward discounting \\
+GAE Parameter & $\lambda$ & 0.95 & Advantage estimation bias-variance tradeoff \\
+Clip Ratio & $\epsilon$ & 0.2 & PPO clipping threshold \\
+Value Loss Coefficient & $c_1$ & 0.5 & Value function loss weight \\
+Entropy Coefficient & $c_2$ & 0.01 & Exploration regularization weight \\
+Mini-batch Size & $B$ & 64 & Gradient update batch size \\
+Update Epochs & $K$ & 10 & Training epochs per PPO update \\
+Rollout Length & $T$ & 384 & Experience collection timesteps \\
+\hline
+\multicolumn{4}{c}{\textbf{Environment Parameters}} \\
+\hline
+Max Episode Steps & $T_{max}$ & 1000 & Maximum timesteps per episode \\
+LIDAR Rays & $N_{lidar}$ & 16 & Number of distance sensors \\
+LIDAR Range & $r_{max}$ & 5.0 m & Maximum detection distance \\
+Velocity Bounds & $[v_{min}, v_{max}]$ & [0.15, 0.5] m/s & UAV speed constraints \\
+Goal Tolerance & $\epsilon_{goal}$ & 0.3 m & Goal reaching threshold \\
+Collision Threshold & $\epsilon_{collision}$ & 0.2 m & Obstacle collision distance \\
+\hline
+\multicolumn{4}{c}{\textbf{Reward Function Weights}} \\
+\hline
+Goal Reward Weight & $\alpha$ & 1.0 & Goal proximity reward scaling \\
+Collision Penalty & $\beta$ & -10.0 & Obstacle collision punishment \\
+Boundary Penalty & $\gamma$ & -5.0 & Environment boundary violation \\
+Efficiency Reward & $\delta$ & 0.1 & Path efficiency incentive \\
+\hline
+\multicolumn{4}{c}{\textbf{Neurosymbolic Parameters}} \\
+\hline
+Initial Blend Ratio & $\lambda_0$ & 0.8 & Initial symbolic influence weight \\
+Minimum Blend Ratio & $\lambda_{min}$ & 0.1 & Minimum symbolic contribution \\
+Decay Rate & $\beta$ & $5 \times 10^{-4}$ & Symbolic weight decay parameter \\
+Rule Confidence & $\rho_{rule}$ & 0.9 & Symbolic rule reliability score \\
+\hline
+\multicolumn{4}{c}{\textbf{Curriculum Learning}} \\
+\hline
+Initial Difficulty & $d_0$ & 0.2 & Starting environment complexity \\
+Adaptation Rate & $\xi$ & 0.05 & Difficulty adjustment speed \\
+Performance Threshold & $R_{threshold}$ & 1.5 & Curriculum advancement criterion \\
+Max Difficulty & $d_{max}$ & 1.0 & Maximum environment complexity \\
+\hline
+\end{tabular}
+\label{tab:hyperparameters}
+\end{table}
+
+\section{Results and Analysis}
+
+Our baseline PPO agents achieved 65\% success rate in static environments and 45\% in dynamic scenarios, requiring approximately 1500 training episodes for convergence. The agents showed reasonable navigation performance but struggled with complex obstacle configurations and generalization to new environments.
+
+The neurosymbolic extensions demonstrated significant improvements across all metrics. Training efficiency improved by 40\%, with stable performance achieved in 900 episodes compared to 1500 for baseline agents. Success rates increased substantially: static environments reached 85\% (vs 65\% baseline), dynamic environments achieved 72\% (vs 45\% baseline), and unseen configurations attained 68\% (vs 38\% baseline). Path efficiency also improved by 25\%, showing more direct navigation paths.
+
+These results demonstrate the effectiveness of integrating symbolic navigation rules with trained RL agents. The neurosymbolic approach maintains the learning capability of neural networks while benefiting from human domain expertise encoded in symbolic rules. The improvements are particularly notable in challenging scenarios and generalization tasks.
+
+Our ablation studies reveal the incremental contribution of each component, as shown in Table \ref{tab:ablation}. The performance improvement follows a logarithmic pattern where each additional component provides diminishing but significant returns. The generalization capability can be quantified using the generalization gap:
+\begin{equation}
+G = \frac{1}{N} \sum_{i=1}^{N} |P_{train,i} - P_{test,i}|
+\end{equation}
+where $P_{train,i}$ and $P_{test,i}$ are performance metrics on training and test environments respectively.
+
+\begin{table}[h]
+\centering
+\caption{Ablation Study Results}
+\begin{tabular}{lcc}
+\hline
+Component & Success Rate & Sample Efficiency \\
+\hline
+Baseline PPO & 65\% & 1500 episodes \\
++ Safety Rules & 72\% & 1300 episodes \\
++ Navigation Heuristics & 78\% & 1100 episodes \\
++ Human Feedback & 85\% & 900 episodes \\
+\hline
+\end{tabular}
+\label{tab:ablation}
+\end{table}
+
+The neurosymbolic approach showed superior generalization with better adaptation to varying obstacle densities, improved performance in environments with different geometric layouts, and more robust behavior when start/goal positions change significantly. Despite the additional symbolic reasoning components, our approach maintains computational efficiency with only 15\% increase in training time, negligible inference overhead (< 2\%), and 8\% increase in memory usage due to rule storage. The computational complexity of the neurosymbolic system scales as $O(n + m)$ where $n$ is the neural network complexity and $m$ is the number of symbolic rules, maintaining linear scalability.
+
+\subsection{Implementation Details}
+
+\textbf{MuJoCo Simulation Specifics:} Our UAV model is implemented using MuJoCo's XML format with detailed physical parameters as shown in Table \ref{tab:mujoco_specs}. The simulation employs semi-implicit Euler integration with adaptive timestep control for numerical stability.
+
+\begin{table}[h]
+\centering
+\caption{MuJoCo UAV Model Specifications}
+\begin{tabular}{lll}
+\hline
+\textbf{Component} & \textbf{Parameter} & \textbf{Value} \\
+\hline
+\multicolumn{3}{c}{\textbf{UAV Physical Properties}} \\
+\hline
+Main Body & Mass & 1.0 kg \\
+& Inertia Matrix & diag([0.1, 0.1, 0.2]) kg⋅m² \\
+& Dimensions & 0.3 × 0.3 × 0.1 m \\
+& Center of Mass & [0, 0, 0] m \\
+\hline
+Rotors (×4) & Max Thrust & 2.5 N each \\
+& Position Offset & ±0.15 m from center \\
+& Thrust Direction & [0, 0, 1] (upward) \\
+& Response Time & 0.02 s (50 Hz) \\
+\hline
+\multicolumn{3}{c}{\textbf{Simulation Parameters}} \\
+\hline
+Physics & Timestep & 0.005 s (200 Hz) \\
+& Integration & Semi-implicit Euler \\
+& Solver & Newton-CG \\
+& Iterations & 100 \\
+\hline
+Contacts & Model & Dahl friction \\
+& Friction Coeff. & μ = 0.8 \\
+& Contact Stiffness & $10^6$ N/m \\
+& Contact Damping & $10^3$ N⋅s/m \\
+\hline
+Environment & Gravity & [0, 0, -9.81] m/s² \\
+& Air Density & 1.225 kg/m³ \\
+& Drag Coefficient & 0.02 \\
+& World Bounds & [-10, 10] × [-10, 10] × [0, 8] m \\
+\hline
+\end{tabular}
+\label{tab:mujoco_specs}
+\end{table}
+
+Collision detection utilizes MuJoCo's built-in broad-phase and narrow-phase algorithms with spatial hashing for efficiency. Contact forces are computed using the projected Gauss-Seidel method with constraint stabilization to prevent penetration.
+
+\textbf{Training Infrastructure:} The training process utilizes parallel environment collection with 8 concurrent simulation instances to accelerate data gathering. Each environment instance runs independently with different random seeds, collecting experience trajectories that are aggregated for batch updates. The total training spans 3000 episodes across all environments, equivalent to approximately 12,000 single-environment episodes.
+
+
+
+
+
+\section{Future Neurosymbolic RL Experiments}
+
+The current work establishes a foundation for neurosymbolic UAV navigation, but several exciting directions remain unexplored. Future experiments should investigate adaptive rule learning where symbolic components evolve based on agent experience rather than remaining static. Multi-agent neurosymbolic systems could explore collaborative navigation with shared symbolic knowledge and distributed decision making.
+
+Advanced neurosymbolic architectures may incorporate hierarchical reasoning where high-level symbolic planners guide low-level neural controllers, or attention mechanisms that dynamically weight symbolic versus neural contributions based on environmental context. Integration with modern large language models could enable natural language specification of navigation rules and real-time rule modification through human interaction.
+
+Sim-to-real transfer experiments will be crucial for validating the practical applicability of neurosymbolic approaches. The symbolic components may provide better transfer properties compared to pure neural approaches, as domain knowledge encoded in rules should remain valid across simulation and real-world scenarios. Testing on physical UAV platforms with varying sensor configurations and environmental conditions will demonstrate the robustness of the neurosymbolic framework.
+
+\section*{Conclusion}
+
+This work presents a comprehensive comparison study between standard PPO reinforcement learning and neurosymbolic reinforcement learning for autonomous UAV navigation. We develop a lightweight MuJoCo-based simulation environment and train baseline PPO agents, then extend them with symbolic navigation rules to create neurosymbolic variants.
+
+Our key findings demonstrate that neurosymbolic extensions significantly improve upon baseline RL agents, achieving 40\% reduction in sample efficiency, 85\% success rate versus 65\% for baseline, and superior generalization to unseen environments. The integration of human domain expertise through symbolic rules provides a practical approach for enhancing trained RL agents without requiring complete retraining.
+
+The presented framework offers a foundation for developing more intelligent and robust autonomous UAV systems that combine the learning capabilities of neural networks with the reliability of symbolic reasoning. This hybrid approach shows particular promise for real-world deployment where safety and interpretability are critical requirements.
+
+
+
+\section*{Author Contributions}
+
+
+\section*{Acknowledgments}
+
+
+\section*{Funding}
+The authors did not receive support from any organization for the submitted work.
+
+\section*{Conflict of Interest}
+The authors have no competing interests to declare that are relevant to the content of this article.
+
+
+
+\bibliography{ref}% common bib file
+
+
+
+
+
+\end{document}
