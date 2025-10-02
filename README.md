@@ -19,7 +19,7 @@ A state-of-the-art reinforcement learning project that trains an Unmanned Aerial
 
 ### Video Demonstration
 
-Watch the UAV navigate from a fixed start position to various goal locations while avoiding obstacles:
+Watch the UAV navigate from a random start position to random goal location while avoiding obstacles:
 
 [![UAV Navigation Demo](screenshot.png)](UAV_Navigation.mp4)
 
