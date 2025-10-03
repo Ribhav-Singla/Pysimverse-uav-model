@@ -27,9 +27,15 @@ CONFIG = {
     'collision_distance': 0.1,
     'control_dt': 0.05,
     'boundary_penalty': -100,
-    'lidar_range': 2.9,
-    'lidar_num_rays': 16,
     'step_reward': -0.01,
+    
+    # Camera configuration - MUST match uav_env.py
+    'camera_enabled': True,
+    'camera_width': 224,
+    'camera_height': 224,
+    'camera_fov': 90,
+    'camera_fps': 2.0,
+    'use_vision_model': True,
     
     # Render-specific parameters (do not affect agent logic)
     'kp_pos': 1.5,
@@ -253,89 +259,10 @@ class EnvironmentGenerator:
         
         return False, None, float('inf')
 
-def get_lidar_readings(pos, obstacles):
-    """Generate LIDAR readings in 360 degrees around the UAV - MUST match training"""
-    lidar_readings = []
-    
-    for i in range(CONFIG['lidar_num_rays']):
-        angle = (2 * math.pi * i) / CONFIG['lidar_num_rays']
-        ray_dir = np.array([math.cos(angle), math.sin(angle), 0])
-        
-        min_distance = CONFIG['lidar_range']
-        
-        boundary_dist = ray_boundary_intersection(pos, ray_dir)
-        if boundary_dist < min_distance:
-            min_distance = boundary_dist
-        
-        for obs in obstacles:
-            obs_dist = ray_obstacle_intersection(pos, ray_dir, obs)
-            if obs_dist < min_distance:
-                min_distance = obs_dist
-        
-        # Normalize LIDAR reading to [0, 1] range - MUST match training
-        normalized_distance = min_distance / CONFIG['lidar_range']
-        lidar_readings.append(normalized_distance)
-    
-    return np.array(lidar_readings)
+# LIDAR functions removed - now using vision-based system
+# All obstacle and goal detection is handled by the UAVEnv vision system
 
-def ray_boundary_intersection(pos, ray_dir):
-    """Calculate intersection of ray with world boundaries - MUST match training"""
-    half_world = CONFIG['world_size'] / 2
-    min_dist = CONFIG['lidar_range']
-    
-    boundaries = [
-        (half_world, np.array([1, 0, 0])),
-        (-half_world, np.array([-1, 0, 0])),
-        (half_world, np.array([0, 1, 0])),
-        (-half_world, np.array([0, -1, 0]))
-    ]
-    
-    for boundary_pos, boundary_normal in boundaries:
-        denominator = np.dot(ray_dir, boundary_normal)
-        if abs(denominator) > 1e-6:
-            if boundary_normal[0] != 0:
-                t = (boundary_pos - pos[0]) / ray_dir[0]
-            else:
-                t = (boundary_pos - pos[1]) / ray_dir[1]
-            
-            if t > 0:
-                intersection = pos + t * ray_dir
-                if (-half_world <= intersection[0] <= half_world and 
-                    -half_world <= intersection[1] <= half_world):
-                    min_dist = min(min_dist, t)
-    
-    return min_dist
-
-def ray_obstacle_intersection(pos, ray_dir, obstacle):
-    """Calculate intersection of ray with obstacle - MUST match training"""
-    obs_pos = np.array(obstacle['pos'])
-    min_dist = CONFIG['lidar_range']
-    
-    if obstacle['shape'] == 'box':
-        to_obs = obs_pos - pos
-        proj_length = np.dot(to_obs, ray_dir)
-        
-        if proj_length > 0:
-            closest_point = pos + proj_length * ray_dir
-            lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])
-            
-            if lateral_dist < max(obstacle['size'][0], obstacle['size'][1]):
-                surface_dist = max(0, proj_length - max(obstacle['size'][0], obstacle['size'][1]))
-                min_dist = min(min_dist, surface_dist)
-    
-    elif obstacle['shape'] == 'cylinder':
-        to_obs = obs_pos - pos
-        proj_length = np.dot(to_obs, ray_dir)
-        
-        if proj_length > 0:
-            closest_point = pos + proj_length * ray_dir
-            lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])
-            
-            if lateral_dist < obstacle['size'][0]:
-                surface_dist = max(0, proj_length - obstacle['size'][0])
-                min_dist = min(min_dist, surface_dist)
-    
-    return min_dist
+# LIDAR ray intersection functions removed - now using vision-based system
 
 import os
 
@@ -461,15 +388,21 @@ print(f"🛣️ Green path trail: {CONFIG['path_trail_length']} points")
 
 # Initialize PPO agent with the EXACT same architecture as training
 env = UAVEnv()
-state_dim = env.observation_space.shape[0]  # Will be 36 with our enhanced features
+state_dim = env.observation_space.shape[0]  # Vision-based: 41D [pos(3), vel(3), goal_dist(3), visual_features(32)]
 action_dim = env.action_space.shape[0]
+
+print(f"🧠 VISION-BASED ARCHITECTURE LOADED:")
+print(f"   - Observation Space: {state_dim}D (Vision-Based)")
+print(f"   - UAV State: 9D (position, velocity, goal distance)")
+print(f"   - Visual Features: 32D (camera-based obstacle & goal detection)")
+print(f"   - Action Space: {action_dim}D (velocity control)")
 
 # Use EXACT parameters from training.py
 action_std = 1.0            # Start with 100% exploration
 lr_actor = 0.0001           # learning rate for actor
 lr_critic = 0.0004          # learning rate for critic
 gamma = 0.999               # increased for longer-term planning
-K_epochs = 12               # update policy for K epochs
+K_epochs = 11               # Match training.py exactly (was 12)
 eps_clip = 0.1              # clip parameter for PPO
 
 # Initialize PPO agent
@@ -573,60 +506,12 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             current_pos = data.qpos[:3].copy()
             current_vel = data.qvel[:3].copy()
             
-            # Create observation for PPO agent - IDENTICAL to training environment
-            goal_dist = CONFIG['goal_pos'] - current_pos
-            lidar_readings = get_lidar_readings(current_pos, obstacles)
-            
-            # === LIDAR FEATURE ENGINEERING ===
-            # EXACTLY MATCHING the processing in uav_env.py _get_obs()
-            
-            # 1. Minimum distance (closest obstacle)
-            min_lidar = np.min(lidar_readings)
-            
-            # 2. Mean distance (overall clearance)
-            mean_lidar = np.mean(lidar_readings)
-            
-            # 3. Direction to closest obstacle (unit vector)
-            closest_idx = np.argmin(lidar_readings)
-            closest_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays']
-            obstacle_direction = np.array([np.cos(closest_angle), np.sin(closest_angle)])
-            
-            # 4. Danger level (ratio of close obstacles)
-            danger_threshold = 0.36  # 1.0m / 2.8m normalized
-            num_close_obstacles = np.sum(lidar_readings < danger_threshold)
-            danger_level = num_close_obstacles / CONFIG['lidar_num_rays']
-            
-            # 5. Directional clearance (front/right/back/left sectors)
-            sector_size = len(lidar_readings) // 4
-            front_clear = np.mean(lidar_readings[0:sector_size])
-            right_clear = np.mean(lidar_readings[sector_size:2*sector_size])
-            back_clear = np.mean(lidar_readings[2*sector_size:3*sector_size])
-            left_clear = np.mean(lidar_readings[3*sector_size:4*sector_size])
-            
-            # 6. Goal direction alignment (unit vector toward goal)
-            goal_direction_norm = goal_dist[:2] / (np.linalg.norm(goal_dist[:2]) + 1e-8)
-            
-            # Combine all LIDAR features (11 dimensions)
-            lidar_features = np.array([
-                min_lidar,                    # 1D
-                mean_lidar,                   # 1D
-                obstacle_direction[0],        # 1D
-                obstacle_direction[1],        # 1D
-                danger_level,                 # 1D
-                front_clear,                  # 1D
-                right_clear,                  # 1D
-                back_clear,                   # 1D
-                left_clear,                   # 1D
-                goal_direction_norm[0],       # 1D
-                goal_direction_norm[1]        # 1D
-            ])
-            
-            # Create exact 36-dimensional state vector as defined in uav_env.py
-            # 3 (pos) + 3 (vel) + 3 (goal) + 16 (lidar) + 11 (lidar features) = 36 dimensions
-            state = np.concatenate([current_pos, current_vel, goal_dist, lidar_readings, lidar_features])
+            # Use environment to get proper observation - IDENTICAL to training
+            # This ensures we get the exact same 41D vision-based observation
+            obs = env._get_obs()
             
             # Convert to torch tensor
-            state_tensor = torch.FloatTensor(state.reshape(1, -1))
+            state_tensor = torch.FloatTensor(obs.reshape(1, -1))
 
             # Agent selects action
             raw_action, _ = ppo_agent.select_action(state_tensor)
