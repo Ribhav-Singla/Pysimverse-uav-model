@@ -9,15 +9,16 @@
   <worldbody>
     <geom name="ground" type="plane" size="4.0 4.0 0.1" material="grid"/>
     <light name="light1" pos="0 0 4" dir="0 0 -1" diffuse="1 1 1"/>
-    <body name="chassis" pos="-3.0 3.0 1.0">
+    <body name="chassis" pos="-3.0 -3.0 1.0">
       <joint type="free" name="root"/>
       <geom type="box" size="0.12 0.12 0.02" rgba="1.0 0.0 0.0 1.0" mass="0.8"/>
       <site name="motor1" pos="0.08 0.08 0" size="0.01"/>
       <site name="motor2" pos="-0.08 0.08 0" size="0.01"/>
       <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
       <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
+      <camera name="uav_camera" pos="0 0 0.1" euler="0 90 0" fovy="90"/>
     </body>
-    <geom name="static_obs_0" type="box" size="0.05195125281486069 0.08893947271517141 1.0" pos="1.4963566123586003 -1.4596493212797574 1.0" rgba="0.7054660653056612 0.23000881857805508 0.4729834661076068 1.0"/>
+    <geom name="static_obs_0" type="cylinder" size="0.0742714769934022 1.0" pos="0.6947195823141062 2.708613574659621 1.0" rgba="0.6004904138897154 0.5664155697852143 0.5596198063075752 1.0"/>
   </worldbody>
   <actuator>
     <motor name="m1" gear="0 0 1 0 0 0" site="motor1"/>

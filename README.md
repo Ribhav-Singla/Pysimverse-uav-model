@@ -1,40 +1,52 @@
-# UAV Navigation with PPO and LIDAR
+# UAV Navigation with PPO and Vision-Based Detection
 
-A reinforcement learning project that trains an Unmanned Aerial Vehicle (UAV) to navigate through obstacle-rich environments using Proximal Policy Optimization (PPO) and LIDAR-based obstacle detection.
+A reinforcement learning project that trains an Unmanned Aerial Vehicle (UAV) to navigate through obstacle-rich environments using Proximal Policy Optimization (PPO) and camera-based vision detection with deep learning models.
 
 ## 🚁 Project Overview
 
 This project implements an intelligent UAV navigation system using:
 - **MuJoCo Physics Engine** for realistic 3D simulation
 - **PPO (Proximal Policy Optimization)** for reinforcement learning
-- **LIDAR Sensor Simulation** for obstacle detection (16-ray sensor with 3.0m range)
+- **Vision-Based Detection** using YOLOv8 and computer vision models
+- **Camera Rendering System** with adaptive FPS control (0.5-10.0 FPS)
 - **Custom Gymnasium Environment** with dynamic obstacles and boundary enforcement
 - **Real-time Visualization** with trajectory tracking
+- **Neurosymbolic Integration** with rule-based navigation guidance
 
 ## 🎯 Features
 
+- **Vision-Based Navigation**: Camera rendering with YOLOv8 object detection
+- **Adaptive FPS Control**: Configurable camera update rates (0.5-10.0 FPS) for performance optimization
+- **Smart Obstacle Detection**: 32D visual features including object classification, distance estimation, and spatial awareness
+- **Neurosymbolic System**: Rule-based navigation guidance with 11 comprehensive navigation rules
 - **Dynamic Environment**: Static and dynamic obstacles with configurable density
-- **LIDAR Integration**: 16-ray LIDAR sensor for 360° obstacle detection
 - **Collision Detection**: Precise collision boundaries (0.2m threshold)
-- **Reward Engineering**: Survival bonuses, goal incentives, and penalty system
+- **Reward Engineering**: Vision-based proximity penalties and goal incentives
 - **Adaptive Training**: Action standard deviation decay and learning rate scheduling
-- **Trajectory Visualization**: Real-time path tracking and rendering
-- **Model Persistence**: Automatic saving/loading of trained weights
+- **Real-time Visualization**: Trajectory tracking with camera view rendering
+- **Model Persistence**: Separate weight files for standard and neurosymbolic training
 
 ## 📁 Project Structure
 
 ```
 pysimverse/
-├── uav_env.py          # Custom Gymnasium environment
-├── ppo_agent.py        # PPO agent with actor-critic networks
-├── training.py         # Training loop and hyperparameter management
-├── uav_render.py       # Visualization and rendering
-├── environment.xml     # MuJoCo environment configuration
-├── uav_model.xml       # UAV physics model definition
-├── test_environment.py # Environment testing utilities
-├── test_lidar.py       # LIDAR sensor testing
-├── PPO_preTrained/     # Saved model weights
-└── pysim_env/          # Python virtual environment
+├── uav_env.py                    # Custom Gymnasium environment with vision system
+├── ppo_agent.py                  # PPO agent with actor-critic networks
+├── training.py                   # Standard PPO training loop
+├── neurosymbolic_training.py     # Neurosymbolic rule-guided training
+├── neurosymbolic_ppo_agent.py    # Enhanced PPO agent with rule integration
+├── neurosymbolic_rdr.py          # Ripple Down Rules knowledge base
+├── vision_obstacle_detector.py   # Vision-based detection system
+├── uav_render.py                 # Standard visualization and rendering
+├── uav_render_neurosymbolic.py   # Neurosymbolic model visualization
+├── environment.xml               # MuJoCo environment configuration
+├── uav_model.xml                 # UAV physics model definition
+├── uav_navigation_rules.json     # Navigation rules knowledge base
+├── yolov8n.pt                    # YOLOv8 pretrained model
+├── PPO_preTrained/               # Saved model weights
+│   ├── PPO_UAV_Weights.pth           # Standard training weights
+│   └── PPO_UAV_Weights_neurosymbolic.pth # Neurosymbolic weights
+└── pysim_env/                    # Python virtual environment
 ```
 
 ## 🛠️ Installation
@@ -67,6 +79,8 @@ pysimverse/
    pip install gymnasium
    pip install numpy matplotlib opencv-python
    pip install PyOpenGL glfw imageio
+   pip install ultralytics  # For YOLOv8
+   pip install pillow      # For image processing
    ```
 
 ## 🚀 Usage
@@ -76,43 +90,54 @@ pysimverse/
 # Activate virtual environment
 pysim_env\Scripts\activate
 
-# Start training
+# Standard PPO training with vision system
 python training.py
+
+# Neurosymbolic rule-guided training
+python neurosymbolic_training.py
 ```
 
 ### Rendering and Visualization
 ```bash
-# Run with visualization
+# Standard model visualization
 python uav_render.py
+
+# Neurosymbolic model with rule explanations
+python uav_render_neurosymbolic.py
 ```
 
-### Testing Components
+### Camera System Configuration
 ```bash
-# Test environment functionality
-python test_environment.py
+# Test vision detection system
+python -c "from vision_obstacle_detector import VisionObstacleDetector; print('Vision system ready!')"
 
-# Test LIDAR sensor
-python test_lidar.py
+# Adjust camera FPS in uav_env.py CONFIG:
+CONFIG['camera_fps'] = 2.0  # 2 FPS (updates every 10 steps)
+CONFIG['camera_fps'] = 10.0 # 10 FPS (updates every step)
 ```
 
 ## 🧠 Model Architecture
 
 ### Actor-Critic Networks
-- **Input**: 25-dimensional state space (position, velocity, LIDAR readings)
-- **Actor Network**: 3 hidden layers (128 units each) with LayerNorm
-- **Critic Network**: 3 hidden layers (128 units each) with LayerNorm
-- **Output**: 4-dimensional continuous action space (3D velocity + rotation)
+- **Input**: 41-dimensional state space (position, velocity, visual features)
+- **Actor Network**: 3 hidden layers (256 units each) with LayerNorm
+- **Critic Network**: 3 hidden layers (256 units each) with LayerNorm
+- **Output**: 3-dimensional continuous action space (3D velocity)
 
-### State Space (25 dimensions)
-- **Position**: [x, y, z] coordinates
-- **Velocity**: [vx, vy, vz] components
-- **LIDAR**: 16-ray distance measurements
-- **Goal Information**: Distance and direction to target
+### State Space (41 dimensions)
+- **Position**: [x, y, z] coordinates (3D)
+- **Velocity**: [vx, vy, vz] components (3D)
+- **Goal Distance**: [dx, dy, dz] to target (3D)
+- **Visual Features**: Camera-based detection features (32D)
+  - Image statistics (brightness, contrast, color channels)
+  - Obstacle detection (count, confidence, direction, distance)
+  - Goal detection (visibility, direction, confidence)
+  - Spatial awareness (clearance zones, navigation confidence)
 
-### Action Space (4 dimensions)
+### Action Space (3 dimensions)
 - **Linear Velocity**: [vx, vy, vz] changes
-- **Angular Velocity**: [ωz] yaw rotation
 - **Constraints**: Velocity range [0.15, 0.5] m/s
+- **Note**: Constant altitude maintained automatically
 
 ## 🎛️ Hyperparameters
 
@@ -129,16 +154,22 @@ python test_lidar.py
 ## 🏆 Reward System
 
 ### Reward Components
-- **Survival Bonus**: +0.01 per timestep
-- **Goal Progress**: +0.2 for moving toward target
-- **Goal Achievement**: +100 for reaching target (< 0.5m)
+- **Goal Progress**: +10.0 × (progress toward goal)
+- **Goal Achievement**: +1000 for reaching target (< 0.5m) + stabilization requirement
+- **Vision-Based Proximity Penalties**: 
+  - Very close obstacles (< 0.3m): -5.0
+  - Close obstacles (< 0.5m): -2.0
+  - Caution zone (< 1.0m): -0.5
+- **Safe Navigation Bonus**: +0.5 for maintaining safe distance while progressing
+- **Directional Bias**: Rewards eastward movement when goal is eastward
+- **Boundary Penalties**: -10.0 × proximity to boundaries
 - **Collision Penalty**: -100 for obstacle collision
-- **Boundary Penalty**: -10 for leaving valid area
+- **Out-of-Bounds Penalty**: -100 for leaving valid area
 
 ### Termination Conditions
 - Collision with obstacles (0.2m threshold)
 - Boundary violation
-- Goal achievement (< 0.5m to target)
+- Goal achievement with stabilization (< 0.5m for 10 consecutive steps)
 - Maximum episode length (50,000 steps)
 
 ## 📊 Performance Monitoring
@@ -162,12 +193,21 @@ Episode 3    Length: 123    Reward: -45.7
 ### Environment Configuration (`uav_env.py`)
 ```python
 CONFIG = {
-    'boundary_size': [10, 10, 5],     # Environment boundaries
-    'obstacle_count': 8,              # Number of obstacles
-    'goal_pos': [8, 8, 2],           # Target position
-    'lidar_range': 3.0,              # LIDAR maximum range
-    'step_reward': 0.01,             # Survival bonus
-    'boundary_penalty': -10,         # Out-of-bounds penalty
+    'world_size': 8.0,               # Environment boundaries (8x8m)
+    'start_pos': [-3, -3, 1.0],      # UAV starting position
+    'goal_pos': [3, 3, 1.0],         # Target position (dynamic)
+    'uav_flight_height': 1.0,        # Constant flight altitude
+    
+    # Vision System
+    'camera_enabled': True,          # Enable camera rendering
+    'camera_fps': 2.0,              # Camera update frequency
+    'camera_width': 224,            # Image width
+    'camera_height': 224,           # Image height
+    'vision_detection_model': 'yolo', # Detection model type
+    
+    # Physics
+    'control_dt': 0.02,             # Control timestep (50 Hz)
+    'max_velocity': 2.0,            # Maximum UAV velocity
 }
 ```
 
@@ -176,39 +216,107 @@ CONFIG = {
 - Adjust network architecture in `ppo_agent.py`
 - Configure environment parameters in `uav_env.py`
 
+## 📹 Vision System Architecture
+
+### Camera Rendering Pipeline
+1. **MuJoCo Integration**: UAV-mounted camera renders 224×224 RGB images
+2. **Adaptive FPS Control**: Configurable update rates (0.5-10.0 FPS) for performance optimization
+3. **Real-time Processing**: Vision features cached between updates to maintain smooth simulation
+
+### Obstacle Detection Methods
+
+#### YOLOv8 Detection (Primary)
+- **Model**: YOLOv8n (6.2MB nano model) for real-time performance
+- **Object Classification**: Detects and classifies objects in camera view
+- **Distance Estimation**: `distance = 3.0 - (bbox_area/total_area) × 2.5`
+- **Direction Calculation**: `direction = (center - image_center) / image_center`
+
+#### Computer Vision Fallback
+- **Edge Detection**: Canny filters for object boundaries
+- **Color Analysis**: HSV space obstacle detection
+- **Contour Analysis**: Geometric shape recognition
+
+### Visual Feature Extraction (32D)
+```python
+# Feature categories:
+- Basic Image Stats (4D):    Brightness, contrast, color channels
+- Obstacle Features (8D):    Count, confidence, direction, distance, density
+- Goal Detection (4D):       Visibility, direction, distance, confidence
+- Spatial Awareness (8D):    Clearance zones, navigation confidence
+- Movement Analysis (8D):    Optical flow, trajectory validation
+```
+
+### Performance Comparison: Vision vs LIDAR
+
+| Aspect | Vision System ✅ | LIDAR System ❌ |
+|--------|------------------|------------------|
+| **Realism** | Real-world applicable | Synthetic ray-casting |
+| **Information** | Rich visual context (color, texture, shape) | Distance-only measurements |
+| **Object Recognition** | Classifies object types | Unknown object types |
+| **Computational Cost** | Efficient with FPS control | CPU-intensive ray-casting |
+| **Transfer Learning** | Applicable to real drones | Simulation-only solution |
+
 ## 📈 Results and Analysis
 
-The optimized model demonstrates:
-- **Improved Episode Length**: Survival time increased significantly
-- **Efficient Navigation**: Direct paths to goals while avoiding obstacles
-- **Robust Collision Avoidance**: Effective LIDAR-based obstacle detection
-- **Stable Learning**: Consistent performance improvement over training
+The vision-based system demonstrates significant improvements over LIDAR:
+
+### Performance Metrics
+- **Observation Space**: Optimized from 68D (hybrid) to 41D (vision-only)
+- **Computational Efficiency**: Vision updates at 2.0 FPS vs LIDAR every step
+- **Detection Accuracy**: Object classification vs distance-only measurements
+- **Real-world Applicability**: Camera-based system directly transferable to real UAVs
+
+### Training Results
+- **Enhanced Spatial Understanding**: 32D visual features provide richer environmental context
+- **Smarter Obstacle Avoidance**: Object type recognition enables appropriate responses
+- **Improved Goal Navigation**: Visual goal detection with confidence scoring
+- **Stable Learning**: Neurosymbolic rules provide guidance during exploration
+
+### Neurosymbolic Integration
+- **Rule-Based Guidance**: 11 comprehensive navigation rules with continuous actions
+- **Human-Interpretable Decisions**: Rule firing provides explainable AI behavior
+- **Adaptive Learning**: Rules complement RL exploration while maintaining safety
 
 ## 🐛 Troubleshooting
 
 ### Common Issues
 1. **MuJoCo Installation**: Ensure MuJoCo is properly installed and licensed
-2. **GPU Memory**: Reduce batch size if CUDA out of memory errors occur
-3. **Environment Reset**: Check MuJoCo XML files for proper configuration
-4. **Model Loading**: Architecture mismatch requires training from scratch
+2. **YOLO Model Download**: YOLOv8n.pt downloads automatically on first run
+3. **Camera Rendering**: Ensure graphics drivers support OpenGL
+4. **GPU Memory**: Reduce batch size if CUDA out of memory errors occur
+5. **Vision FPS**: Lower camera_fps if experiencing performance issues
+6. **Model Loading**: Architecture mismatch (41D vs 68D) requires training from scratch
 
 ### Debug Mode
 ```python
 # Enable detailed logging in training.py
 render = True  # Enable visualization
 log_interval = 1  # Log every episode
+
+# Vision system debugging in uav_env.py
+CONFIG['camera_fps'] = 10.0  # Max FPS for debugging
+print(f"Vision features shape: {visual_features.shape}")  # Check feature dimensions
+```
+
+### Performance Optimization
+```python
+# Optimize camera FPS for your hardware:
+CONFIG['camera_fps'] = 0.5   # Slow hardware: 0.5 FPS (every 40 steps)
+CONFIG['camera_fps'] = 2.0   # Balanced: 2.0 FPS (every 10 steps) 
+CONFIG['camera_fps'] = 10.0  # Fast hardware: 10.0 FPS (every step)
 ```
 
 ## 📝 Citation
 
 If you use this project in your research, please cite:
 ```bibtex
-@article{uav_ppo_navigation,
-  title={UAV Navigation with PPO and LIDAR},
+@article{uav_vision_navigation,
+  title={UAV Navigation with PPO and Vision-Based Detection},
   author={Ribhav Singla},
   year={2025},
   journal={GitHub Repository},
-  url={https://github.com/Ribhav-Singla/Pysimverse-uav-model}
+  url={https://github.com/Ribhav-Singla/Pysimverse-uav-model},
+  note={Vision-based obstacle detection with YOLOv8 and neurosymbolic integration}
 }
 ```
 

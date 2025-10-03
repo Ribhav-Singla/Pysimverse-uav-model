@@ -7,6 +7,7 @@ import random
 import csv
 import os
 from datetime import datetime
+from vision_obstacle_detector import get_vision_detector
 
 # Configuration from uav_render.py, adapted for the environment
 CONFIG = {
@@ -22,9 +23,14 @@ CONFIG = {
     'control_dt': 0.05,
     'max_steps': 50000,  # Max steps per episode
     'boundary_penalty': -100,  # Penalty for going out of bounds
-    'lidar_range': 2.9,  # LIDAR maximum detection range
-    'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
     'step_reward': -0.01,    # Survival bonus per timestep
+    # Camera configuration
+    'camera_enabled': True,  # Enable camera rendering
+    'camera_width': 224,     # Camera image width
+    'camera_height': 224,    # Camera image height
+    'camera_fov': 90,        # Field of view in degrees
+    'camera_fps': 2.0,       # Camera frames per second (how often to capture images)
+    'use_vision_model': True, # Use pretrained vision model for obstacle detection
 }
 
 class EnvironmentGenerator:
@@ -200,6 +206,7 @@ class EnvironmentGenerator:
       <site name="motor2" pos="-0.08 0.08 0" size="0.01"/>
       <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
       <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
+      <camera name="uav_camera" pos="0 0 0.1" euler="0 90 0" fovy="90"/>
     </body>'''
         for obs in obstacles:
             if obs['shape'] == 'box':
@@ -248,9 +255,14 @@ class UAVEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
         
-        # Observation space: [pos(3), vel(3), goal_dist(3), lidar_readings(16), lidar_features(11)]
-        # LIDAR features: min, mean, closest_dir(2), danger_level, clearances(4), goal_alignment(2)
-        obs_dim = 3 + 3 + 3 + CONFIG['lidar_num_rays'] + 11
+        # Initialize camera after model loading
+        if CONFIG['camera_enabled']:
+            self._setup_camera_rendering()
+        
+        # Observation space: [pos(3), vel(3), goal_dist(3), visual_features(32)]
+        # Visual features: camera-based obstacle and goal detection features
+        visual_dim = 32 if CONFIG['camera_enabled'] else 0
+        obs_dim = 3 + 3 + 3 + visual_dim
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         
         # Action space: 3D velocity control (vx, vy, vz=0) - no Z-axis movement
@@ -273,6 +285,22 @@ class UAVEnv(gym.Env):
         self.goal_reached = False
         self.goal_stabilization_steps = 0
         self.goal_hold_duration = 50  # Steps to hold at goal before episode ends (more steps for better stabilization)
+        
+        # Camera rendering setup
+        if CONFIG['camera_enabled']:
+            self.camera_id = None  # Will be set after model loading
+            self.renderer = None
+            self.camera_image = np.zeros((CONFIG['camera_height'], CONFIG['camera_width'], 3), dtype=np.uint8)
+            self.cached_visual_features = np.zeros(32)  # Cache for visual features
+            
+            # Calculate vision update interval based on FPS
+            # simulation runs at 50Hz (CONFIG['control_dt'] = 0.02s), so steps_per_second = 50
+            steps_per_second = 1.0 / CONFIG['control_dt']  # 50 steps per second
+            self.vision_update_interval = max(1, int(steps_per_second / CONFIG['camera_fps']))
+            print(f"📹 Camera FPS: {CONFIG['camera_fps']}, updating every {self.vision_update_interval} steps")
+            
+            self.vision_detector = get_vision_detector()  # Initialize vision system
+            self.last_vision_update_step = -1  # Track when vision was last updated
 
     def _get_velocity_limits(self):
         """Get adaptive velocity limits based on training progress (velocity curriculum)"""
@@ -468,6 +496,10 @@ class UAVEnv(gym.Env):
         
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
+        
+        # Reinitialize camera if enabled
+        if CONFIG['camera_enabled']:
+            self._setup_camera_rendering()
         
         # Set initial position again after model reload
         self.data.qpos[:3] = CONFIG['start_pos']
@@ -665,191 +697,185 @@ class UAVEnv(gym.Env):
             'current_map_info': getattr(self, 'current_map_info', None),
             'total_levels': 10
         }
+    
+    def set_camera_fps(self, fps):
+        """
+        Dynamically adjust camera FPS during runtime
+        
+        Args:
+            fps: New frames per second rate (e.g., 0.5, 1.0, 2.0, 5.0, 10.0)
+        """
+        if not CONFIG['camera_enabled']:
+            print("⚠️ Camera not enabled, FPS setting ignored")
+            return
+            
+        if fps <= 0:
+            print("⚠️ FPS must be positive")
+            return
+            
+        # Update config
+        CONFIG['camera_fps'] = fps
+        
+        # Recalculate update interval
+        steps_per_second = 1.0 / CONFIG['control_dt']  # 50 steps per second
+        old_interval = self.vision_update_interval
+        self.vision_update_interval = max(1, int(steps_per_second / fps))
+        
+        print(f"📹 Camera FPS updated: {fps} FPS")
+        print(f"   - Update interval changed: {old_interval} → {self.vision_update_interval} steps")
+        print(f"   - Vision will update every {self.vision_update_interval * CONFIG['control_dt']:.3f} seconds")
+    
+    def get_camera_info(self):
+        """Get current camera configuration information"""
+        if not CONFIG['camera_enabled']:
+            return {'camera_enabled': False}
+            
+        steps_per_second = 1.0 / CONFIG['control_dt']
+        actual_fps = steps_per_second / self.vision_update_interval
+        
+        return {
+            'camera_enabled': True,
+            'configured_fps': CONFIG['camera_fps'],
+            'actual_fps': actual_fps,
+            'update_interval_steps': self.vision_update_interval,
+            'update_interval_seconds': self.vision_update_interval * CONFIG['control_dt'],
+            'camera_resolution': (CONFIG['camera_width'], CONFIG['camera_height']),
+            'steps_since_last_update': self.step_count - self.last_vision_update_step if hasattr(self, 'last_vision_update_step') else 0
+        }
 
     def _get_obs(self):
         pos = self.data.qpos[:3]
         vel = self.data.qvel[:3]
         goal_dist = CONFIG['goal_pos'] - pos
         
-        # Get LIDAR readings (normalized to [0, 1])
-        lidar_readings = self._get_lidar_readings(pos)
+        # Get visual features from camera (if enabled)
+        if CONFIG['camera_enabled']:
+            # Update camera view based on FPS setting
+            should_update_vision = (self.step_count - self.last_vision_update_step) >= self.vision_update_interval
+            
+            if should_update_vision:
+                camera_image = self._render_camera_view()
+                self.cached_visual_features = self._extract_visual_features(camera_image)
+                self.last_vision_update_step = self.step_count
+                
+                # Optional: Log vision update for debugging
+                if self.step_count % (self.vision_update_interval * 10) == 0:  # Log every 10 vision updates
+                    print(f"📹 Vision updated at step {self.step_count} (FPS: {CONFIG['camera_fps']})")
+            
+            visual_features = self.cached_visual_features
+            return np.concatenate([pos, vel, goal_dist, visual_features])
+        else:
+            # If camera disabled, return zero visual features
+            visual_features = np.zeros(32)
+            return np.concatenate([pos, vel, goal_dist, visual_features])
+
+
+
+    def _setup_camera_rendering(self):
+        """Setup camera rendering system"""
+        try:
+            # Get camera ID
+            camera_names = [self.model.camera(i).name for i in range(self.model.ncam)]
+            if 'uav_camera' in camera_names:
+                self.camera_id = self.model.camera('uav_camera').id
+            else:
+                print("⚠️ Warning: UAV camera not found in model")
+                self.camera_id = 0  # Use default camera
+            
+            # Initialize renderer
+            self.renderer = mujoco.Renderer(self.model, 
+                                          height=CONFIG['camera_height'], 
+                                          width=CONFIG['camera_width'])
+            print(f"📹 Camera rendering initialized: {CONFIG['camera_width']}x{CONFIG['camera_height']}")
+            
+        except Exception as e:
+            print(f"❌ Camera setup failed: {e}")
+            CONFIG['camera_enabled'] = False
+
+    def _render_camera_view(self):
+        """Render image from UAV's camera perspective"""
+        if not CONFIG['camera_enabled'] or self.renderer is None:
+            return self.camera_image
         
-        # === LIDAR FEATURE ENGINEERING ===
-        # Extract meaningful features from raw LIDAR data
+        try:
+            # Update renderer with current physics state
+            self.renderer.update_scene(self.data, camera=self.camera_id)
+            
+            # Render the image
+            image = self.renderer.render()
+            
+            # Convert from RGB to expected format
+            if image is not None:
+                self.camera_image = image.copy()
+            
+            return self.camera_image
+            
+        except Exception as e:
+            print(f"❌ Camera rendering failed: {e}")
+            return self.camera_image
+
+    def _extract_visual_features(self, image):
+        """Extract visual features using the vision detection system"""
+        if image is None or image.size == 0:
+            return self.cached_visual_features
         
-        # 1. Minimum distance (closest obstacle)
-        min_lidar = np.min(lidar_readings)
+        try:
+            # Use the vision detector to get features
+            if hasattr(self, 'vision_detector') and self.vision_detector is not None:
+                features = self.vision_detector.extract_visual_features(image)
+                return features
+            else:
+                # Fallback to simple features if vision detector not available
+                return self._simple_visual_features(image)
+            
+        except Exception as e:
+            print(f"❌ Visual feature extraction failed: {e}")
+            return self.cached_visual_features
+    
+    def _simple_visual_features(self, image):
+        """Fallback simple visual features"""
+        img_float = image.astype(np.float32) / 255.0
+        features = []
         
-        # 2. Mean distance (overall clearance)
-        mean_lidar = np.mean(lidar_readings)
-        
-        # 3. Direction to closest obstacle (unit vector)
-        closest_idx = np.argmin(lidar_readings)
-        closest_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays']
-        obstacle_direction = np.array([np.cos(closest_angle), np.sin(closest_angle)])
-        
-        # 4. Danger level (ratio of close obstacles)
-        danger_threshold = 0.36  # 1.0m / 2.8m normalized
-        num_close_obstacles = np.sum(lidar_readings < danger_threshold)
-        danger_level = num_close_obstacles / CONFIG['lidar_num_rays']
-        
-        # 5. Directional clearance (front/right/back/left sectors)
-        sector_size = len(lidar_readings) // 4
-        front_clear = np.mean(lidar_readings[0:sector_size])
-        right_clear = np.mean(lidar_readings[sector_size:2*sector_size])
-        back_clear = np.mean(lidar_readings[2*sector_size:3*sector_size])
-        left_clear = np.mean(lidar_readings[3*sector_size:4*sector_size])
-        
-        # 6. Goal direction alignment (unit vector toward goal)
-        goal_direction_norm = goal_dist[:2] / (np.linalg.norm(goal_dist[:2]) + 1e-8)
-        
-        # Combine all LIDAR features (11 dimensions)
-        lidar_features = np.array([
-            min_lidar,                    # 1D
-            mean_lidar,                   # 1D
-            obstacle_direction[0],        # 1D
-            obstacle_direction[1],        # 1D
-            danger_level,                 # 1D
-            front_clear,                  # 1D
-            right_clear,                  # 1D
-            back_clear,                   # 1D
-            left_clear,                   # 1D
-            goal_direction_norm[0],       # 1D
-            goal_direction_norm[1]        # 1D
+        # Basic statistics
+        features.extend([
+            np.mean(img_float),
+            np.std(img_float),
+            np.mean(img_float[:, :, 0]),
+            np.mean(img_float[:, :, 1])
         ])
         
-        return np.concatenate([pos, vel, goal_dist, lidar_readings, lidar_features])
+        # Pad to 32 dimensions
+        while len(features) < 32:
+            features.append(0.0)
+        
+        return np.array(features[:32])
 
-    def _get_lidar_readings(self, pos):
-        """Generate LIDAR readings in 360 degrees around the UAV (normalized to [0,1])"""
-        lidar_readings = []
-        
-        # Define obstacle detection threshold (distance at which we consider obstacle "detected")
-        obstacle_detection_threshold = 1.5  # meters
-        
-        for i in range(CONFIG['lidar_num_rays']):
-            # Calculate ray direction (360 degrees divided by number of rays)
-            angle = (2 * math.pi * i) / CONFIG['lidar_num_rays']
-            ray_dir = np.array([math.cos(angle), math.sin(angle), 0])
-            
-            # Cast ray and find closest obstacle or boundary
-            min_distance = CONFIG['lidar_range']
-            closest_obstacle = None
-            
-            # Check boundary intersection
-            boundary_dist = self._ray_boundary_intersection(pos, ray_dir)
-            if boundary_dist < min_distance:
-                min_distance = boundary_dist
-            
-            # Check obstacle intersections
-            for obs in self.obstacles:
-                obs_dist = self._ray_obstacle_intersection(pos, ray_dir, obs)
-                if obs_dist < min_distance:
-                    min_distance = obs_dist
-                    closest_obstacle = obs
-            
-            # Log obstacle detection if obstacle is within detection threshold
-            if (closest_obstacle is not None and 
-                min_distance < obstacle_detection_threshold and 
-                min_distance < CONFIG['lidar_range']):
-                
-                # Get current velocity from the data
-                current_vel = self.data.qvel[:3].copy()
-                
-                # Log the obstacle detection
-                self.log_obstacle_detection(
-                    uav_pos=pos,
-                    obstacle_pos=np.array(closest_obstacle['pos']),
-                    obstacle_type=closest_obstacle['shape'],
-                    obstacle_id=closest_obstacle['id'],
-                    detection_distance=min_distance,
-                    detection_angle=np.degrees(angle),
-                    prev_vel=self.prev_velocity.copy(),
-                    new_vel=current_vel
-                )
-            
-            # Normalize LIDAR reading to [0, 1] range
-            normalized_distance = min_distance / CONFIG['lidar_range']
-            lidar_readings.append(normalized_distance)
-        
-        return np.array(lidar_readings)
-
-    def _ray_boundary_intersection(self, pos, ray_dir):
-        """Calculate intersection of ray with world boundaries"""
-        half_world = CONFIG['world_size'] / 2
-        min_dist = CONFIG['lidar_range']
-        
-        # Check intersection with each boundary
-        boundaries = [
-            (half_world, np.array([1, 0, 0])),   # +X boundary
-            (-half_world, np.array([-1, 0, 0])), # -X boundary
-            (half_world, np.array([0, 1, 0])),   # +Y boundary
-            (-half_world, np.array([0, -1, 0]))  # -Y boundary
-        ]
-        
-        for boundary_pos, boundary_normal in boundaries:
-            # Ray-plane intersection
-            denominator = np.dot(ray_dir, boundary_normal)
-            if abs(denominator) > 1e-6:  # Ray not parallel to boundary
-                if boundary_normal[0] != 0:  # X boundary
-                    t = (boundary_pos - pos[0]) / ray_dir[0]
-                else:  # Y boundary
-                    t = (boundary_pos - pos[1]) / ray_dir[1]
-                
-                if t > 0:  # Ray goes forward
-                    intersection = pos + t * ray_dir
-                    # Check if intersection is within boundary limits
-                    if (-half_world <= intersection[0] <= half_world and 
-                        -half_world <= intersection[1] <= half_world):
-                        min_dist = min(min_dist, t)
-        
-        return min_dist
-
-    def _ray_obstacle_intersection(self, pos, ray_dir, obstacle):
-        """Calculate intersection of ray with obstacle"""
-        obs_pos = np.array(obstacle['pos'])
-        min_dist = CONFIG['lidar_range']
-        
-        if obstacle['shape'] == 'box':
-            # Simple box intersection (approximate)
-            # Calculate distance to box center and subtract box size
-            to_obs = obs_pos - pos
-            proj_length = np.dot(to_obs, ray_dir)
-            
-            if proj_length > 0:  # Obstacle is in ray direction
-                closest_point = pos + proj_length * ray_dir
-                # Check if ray passes near the obstacle
-                lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])  # Only X,Y
-                
-                if lateral_dist < max(obstacle['size'][0], obstacle['size'][1]):
-                    # Approximate distance to obstacle surface
-                    surface_dist = max(0, proj_length - max(obstacle['size'][0], obstacle['size'][1]))
-                    min_dist = min(min_dist, surface_dist)
-        
-        elif obstacle['shape'] == 'cylinder':
-            # Ray-cylinder intersection (simplified)
-            to_obs = obs_pos - pos
-            proj_length = np.dot(to_obs, ray_dir)
-            
-            if proj_length > 0:  # Obstacle is in ray direction
-                closest_point = pos + proj_length * ray_dir
-                lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])  # Only X,Y
-                
-                if lateral_dist < obstacle['size'][0]:  # Within cylinder radius
-                    surface_dist = max(0, proj_length - obstacle['size'][0])
-                    min_dist = min(min_dist, surface_dist)
-        
-        return min_dist
+    def _detect_obstacles_from_image(self, image):
+        """Detect obstacles using the vision detection system"""
+        if hasattr(self, 'vision_detector') and self.vision_detector is not None:
+            return self.vision_detector.detect_obstacles_and_goal(image)
+        else:
+            # Return empty detection if vision detector not available
+            return {
+                'obstacles': [],
+                'goal_visible': False,
+                'goal_direction': np.array([0.0, 0.0]),
+                'num_obstacles': 0,
+                'detection_confidence': 0.0
+            }
 
     def _get_reward_and_termination_info(self, obs):
         pos = obs[:3]
         vel = obs[3:6]
         goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
         
-        # Extract LIDAR readings (normalized, indices 9:25)
-        lidar_readings = obs[9:25]
-        min_obstacle_dist_norm = np.min(lidar_readings)
-        min_obstacle_dist = min_obstacle_dist_norm * CONFIG['lidar_range']  # Convert back to meters
+        # Extract visual features (indices 9:41 - 32D visual features)
+        visual_features = obs[9:41]
+        # Use visual features to estimate minimum obstacle distance
+        # Visual features include obstacle detection confidence and spatial awareness
+        obstacle_confidence = visual_features[0] if len(visual_features) > 0 else 0.0
+        min_obstacle_dist = 2.0 - (obstacle_confidence * 2.0)  # Estimate distance from confidence
         
         # Initialize termination info
         termination_info = {
@@ -936,7 +962,7 @@ class UAVEnv(gym.Env):
         if x_distance_to_west_boundary < 1.0:  # Getting close to western boundary
             reward -= (1.0 - x_distance_to_west_boundary) * 10.0  # Stronger penalty closer to boundary
         
-        # 4. LIDAR-based proximity penalties (collision avoidance)
+        # 4. Vision-based proximity penalties (collision avoidance)
         if min_obstacle_dist < 0.3:
             reward -= 5.0  # Very dangerous - strong penalty
         elif min_obstacle_dist < 0.5:
