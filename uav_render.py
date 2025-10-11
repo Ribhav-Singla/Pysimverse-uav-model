@@ -14,8 +14,8 @@ MODEL_PATH = "environment.xml"
 
 # Configuration parameters - MUST match training environment
 CONFIG = {
-    'start_pos': np.array([-4.0, -4.0, 1.0]),
-    'goal_pos': np.array([4.0, 4.0, 1.0]),
+    'start_pos': np.array([-3.8, -3.8, 1.0]),
+    'goal_pos': np.array([3.8, 3.8, 1.0]),
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,
@@ -38,14 +38,14 @@ class EnvironmentGenerator:
     @staticmethod
     def get_random_goal_position():
         """Select a random goal position from the three available corners (excluding start position)"""
-        # Define the four corners of the world
-        half_world = CONFIG['world_size'] / 2
+        # Use 3.8 units for corners instead of half_world (4.0)
+        # This matches our updated CONFIG settings
         corners = [
-            np.array([half_world, half_world, CONFIG['uav_flight_height']]),    # Top-right
-            np.array([half_world, -half_world, CONFIG['uav_flight_height']]),   # Bottom-right
-            np.array([-half_world, half_world, CONFIG['uav_flight_height']])    # Top-left
+            np.array([3.8, 3.8, CONFIG['uav_flight_height']]),    # Top-right
+            np.array([3.8, -3.8, CONFIG['uav_flight_height']]),   # Bottom-right
+            np.array([-3.8, 3.8, CONFIG['uav_flight_height']])    # Top-left
         ]
-        # Start position is bottom-left: [-half_world, -half_world, height]
+        # Start position is bottom-left: [-3.8, -3.8, height]
         # So we exclude it and randomly select from the other three corners
         return random.choice(corners)
     
@@ -342,11 +342,12 @@ print(f"📏 Obstacle height: {CONFIG['obstacle_height']}m")
 print(f"✈️ UAV flight height: {CONFIG['uav_flight_height']}m")
 print(f"🛣️ Green path trail: {CONFIG['path_trail_length']} points")
 
-# Initialize PPO agent
+# Initialize PPO agent with neurosymbolic architecture
+# Note: lambda_param=0.0 means pure neural policy (original behavior)
 env = UAVEnv()
 state_dim = env.observation_space.shape[0]
 action_dim = env.action_space.shape[0]
-ppo_agent = PPOAgent(state_dim, action_dim, 0, 0, 0, 0, 0)
+ppo_agent = PPOAgent(state_dim, action_dim, 0, 0, 0, 0, 0, lambda_param=0.0)
 
 # Load the latest trained model
 try:
@@ -355,7 +356,9 @@ try:
     paths = [os.path.join(checkpoint_dir, basename) for basename in files]
     latest_model = max(paths, key=os.path.getctime)
     ppo_agent.load(latest_model)
+    ns_info = ppo_agent.get_neurosymbolic_info()
     print(f"🤖 Trained PPO agent loaded successfully from {latest_model}!")
+    print(f"🧠 Neurosymbolic configuration: λ={ns_info['lambda']:.2f}, Rules: {len(ns_info['rules'])}")
 except:
     print("⚠️ Could not load trained agent. Using random actions.")
 

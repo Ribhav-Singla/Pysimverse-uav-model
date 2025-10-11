@@ -47,6 +47,11 @@ def main():
     lr_actor = 0.0001           # learning rate for actor (reduced to prevent overfitting)
     lr_critic = 0.0004          # learning rate for critic (reduced to prevent overfitting)
 
+    # Neurosymbolic parameters (λ = 0 ensures original behavior is preserved)
+    lambda_param = 0.0          # Balance between neural (0) and symbolic (1) - KEEP AT 0 FOR NOW
+    lambda_decay = False        # Whether to gradually decay lambda over training - KEEP FALSE FOR NOW
+    lambda_final = 0.0          # Final lambda value if decaying (not used when lambda_decay=False)
+    
     random_seed = 0
     #############################################
 
@@ -69,7 +74,11 @@ def main():
         print("--------------------------------------------------------------------------------------------")
 
     memory = Memory()
-    ppo_agent = PPOAgent(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, action_std)
+    ppo_agent = PPOAgent(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, action_std, lambda_param)
+    
+    # Example of adding a symbolic rule (won't affect behavior when lambda=0)
+    # Uncomment this when you're ready to use rules
+    # ppo_agent.add_obstacle_avoidance_rule(lidar_threshold=0.6)
     
     print("--------------------------------------------------------------------------------------------")
     print("🎓 CURRICULUM LEARNING ENABLED")
@@ -84,6 +93,12 @@ def main():
     print("   - Obstacle detections: 'obstacle_detection_log.csv'")
     print("   - Detection threshold: 1.5m")
     print("   - CSV files will be refreshed for each training session")
+    print("🧠 NEUROSYMBOLIC CONFIGURATION")
+    print(f"   - Lambda: {lambda_param:.2f} (0 = pure neural, 1 = pure symbolic)")
+    print(f"   - Lambda decay: {'Enabled' if lambda_decay else 'Disabled'}")
+    if lambda_decay:
+        print(f"   - Lambda final value: {lambda_final:.2f}")
+    print("   - Symbolic rules: None (placeholder only)")
     print("--------------------------------------------------------------------------------------------")
     
     # Load pre-trained weights (using relative path)
@@ -158,6 +173,14 @@ def main():
                                (i_episode / max_episodes))
             ppo_agent.set_action_std(new_action_std)
             print(f"Adjusted action std to {new_action_std:.4f}")
+            
+            # Update lambda if lambda decay is enabled
+            if lambda_decay:
+                # Gradually increase lambda's importance (more symbolic guidance)
+                # from initial lambda to final lambda
+                new_lambda = lambda_param + (lambda_final - lambda_param) * (i_episode / max_episodes)
+                ppo_agent.set_lambda(new_lambda)
+                print(f"Adjusted lambda to {new_lambda:.4f}")
             
         for t in range(max_timesteps):
             time_step +=1
@@ -267,6 +290,10 @@ def main():
             print(f"Current Action Std: {current_action_std:.4f}")
             print(f"Latest Episode Reward: {episode_reward:.1f}")
             print(f"Latest Episode Length: {episode_length} steps")
+            
+            # Print neurosymbolic info
+            ns_info = ppo_agent.get_neurosymbolic_info()
+            print(f"Neurosymbolic λ: {ns_info['lambda']:.4f} ({len(ns_info['rules'])} rules)")
             
             # Only print "New best" message if there's improvement
             if episode_reward > best_reward:

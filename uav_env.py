@@ -10,8 +10,8 @@ from datetime import datetime
 
 # Configuration from uav_render.py, adapted for the environment
 CONFIG = {
-    'start_pos': np.array([-4.0, -4.0, 1.0]),
-    'goal_pos': np.array([4.0, 4.0, 1.0]),
+    'start_pos': np.array([-3.8, -3.8, 1.0]),
+    'goal_pos': np.array([3.8, 3.8, 1.0]),
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,  # Half of obstacle height
@@ -289,14 +289,14 @@ class UAVEnv(gym.Env):
     
     def _get_random_goal_position(self):
         """Select a random goal position from the three available corners (excluding start position)"""
-        # Define the four corners of the world
-        half_world = CONFIG['world_size'] / 2
+        # Use 3.8 units for corners instead of half_world (4.0)
+        # This matches our updated CONFIG settings
         corners = [
-            np.array([half_world, half_world, CONFIG['uav_flight_height']]),    # Top-right
-            np.array([half_world, -half_world, CONFIG['uav_flight_height']]),   # Bottom-right
-            np.array([-half_world, half_world, CONFIG['uav_flight_height']])    # Top-left
+            np.array([3.8, 3.8, CONFIG['uav_flight_height']]),    # Top-right
+            np.array([3.8, -3.8, CONFIG['uav_flight_height']]),   # Bottom-right
+            np.array([-3.8, 3.8, CONFIG['uav_flight_height']])    # Top-left
         ]
-        # Start position is bottom-left: [-half_world, -half_world, height]
+        # Start position is bottom-left: [-3.8, -3.8, height]
         # So we exclude it and randomly select from the other three corners
         return random.choice(corners)
     
@@ -628,7 +628,8 @@ class UAVEnv(gym.Env):
             reward += 0.1 * np.dot(vel_horizontal, goal_direction) / np.linalg.norm(goal_direction)
 
         # Distance-based reward (closer to goal = higher reward)
-        reward += max(0, (8.0 - goal_dist) / 80.0)  # Scale to small positive value
+        # Using world_size instead of hard-coded 8.0 to maintain consistent rewards
+        reward += max(0, (CONFIG['world_size'] - goal_dist) / 80.0)  # Scale to small positive value
         
         # --- Relative Reward based on Proximity ---
         # Reward for making progress towards the goal

@@ -12,8 +12,8 @@ MODEL_PATH = "uav_model.xml"
 
 # Configuration parameters for easy tweaking
 CONFIG = {
-    'start_pos': np.array([-4.0, -4.0, 1.8]),   # UAV start position (x, y, z)
-    'goal_pos': np.array([4.0, 4.0, 1.8]),       # UAV goal position
+    'start_pos': np.array([-3.8, -3.8, 1.8]),   # UAV start position (x, y, z)
+    'goal_pos': np.array([3.8, 3.8, 1.8]),       # UAV goal position
     'step_dist': 0.01,                            # Movement per control loop (m)
     'takeoff_thrust': 3.0,                        # Thrust for initial takeoff
     'kp_pos': 1.5,                               # Position gain
