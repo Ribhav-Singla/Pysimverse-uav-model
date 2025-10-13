@@ -23,7 +23,7 @@ def main():
     ############## Hyperparameters ##############
     env_name = "UAVEnv"
     render = False
-    solved_reward = 1000         # stop training if avg_reward > solved_reward
+    solved_reward = 1000         # threshold for saving high-reward models (training continues)
     log_interval = 10          # print avg reward in the interval
     
     # Curriculum Learning Parameters
@@ -36,16 +36,16 @@ def main():
     total_episodes = episodes_per_level_count * total_levels  # 500 * 10 = 5000 episodes
     
     max_episodes = total_episodes
-    max_timesteps = 50000        # max timesteps in one episode
+    max_timesteps = 2500         # Match env max_steps
 
-    update_timestep = 2048      # update policy every n timesteps (reduced for more frequent updates)
-    action_std = 0.3            # constant std for action distribution (reduced for more precise actions)
-    K_epochs = 12               # update policy for K epochs (reduced for faster updates)
-    eps_clip = 0.1              # clip parameter for PPO (reduced for finer control)
-    gamma = 0.999               # increased for longer-term planning
+    update_timestep = 512       # FURTHER REDUCED for very frequent updates to break stagnation
+    action_std = 0.6            # SIGNIFICANTLY INCREASED exploration to break oscillation patterns
+    K_epochs = 6                # FURTHER REDUCED for more responsive policy changes
+    eps_clip = 0.3              # INCREASED for larger policy updates - escape local optima
+    gamma = 0.98                # FURTHER REDUCED for immediate reward focus
 
-    lr_actor = 0.0001           # learning rate for actor (reduced to prevent overfitting)
-    lr_critic = 0.0004          # learning rate for critic (reduced to prevent overfitting)
+    lr_actor = 0.0005           # SIGNIFICANTLY INCREASED for rapid policy adaptation
+    lr_critic = 0.0015          # SIGNIFICANTLY INCREASED for better value updates
 
     # Neurosymbolic parameters (λ = 0 ensures original behavior is preserved)
     lambda_param = 0.0          # Balance between neural (0) and symbolic (1) - KEEP AT 0 FOR NOW
@@ -123,11 +123,11 @@ def main():
     time_step = 0
     best_reward = -float('inf')
     
-    # Adaptive action standard deviation decay
+    # Adaptive action standard deviation decay - MAINTAIN HIGH EXPLORATION
     initial_action_std = action_std
-    min_action_std = 0.1
-    action_std_decay_rate = 0.05
-    action_std_decay_freq = 500  # episodes
+    min_action_std = 0.3        # HIGH minimum to prevent getting stuck in local optima
+    action_std_decay_rate = 0.02 # SLOWER decay rate
+    action_std_decay_freq = 500  # LESS frequent decay - maintain exploration longer
     
     # Initialize curriculum tracking
     current_curriculum_level = 1
@@ -219,7 +219,7 @@ def main():
                 print(f"Goal Position: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
                 print(f"Reason: {termination_info.get('termination_reason', 'unknown')}")
                 print(f"Final Position: {termination_info.get('final_position', 'unknown')}")
-                print(f"Goal Distance: {termination_info.get('goal_distance', 0):.2f}")
+                print(f"Goal Distance: {termination_info.get('goal_distance', 0):.4f}")
                 print(f"Episode Length: {termination_info.get('episode_length', t+1)} steps")
                 print(f"Final Velocity: {termination_info.get('final_velocity', 0):.2f}")
                 print(f"Episode Reward: {episode_reward:.1f}")
@@ -251,15 +251,16 @@ def main():
                 termination_info=termination_info
             )
 
-        # stop training if episode_reward > solved_reward
+        # Check if reward threshold is reached (but don't stop training)
         if episode_reward > solved_reward:
-            print("########## Solved! ##########")
+            print("########## Reward Threshold Reached! ##########")
             print(f"Goal reached with reward: {episode_reward:.1f}")
             print(f"Episode length: {episode_length} steps")
-            # Only save to the specified weights file path
-            ppo_agent.save(os.path.join(checkpoint_path, "PPO_UAV_Weights.pth"))
-            print(f"Model saved to {os.path.join(checkpoint_path, 'PPO_UAV_Weights.pth')}")
-            break
+            # Save a special checkpoint for this high-performing model
+            high_reward_path = os.path.join(checkpoint_path, "PPO_UAV_HighReward.pth")
+            ppo_agent.save(high_reward_path)
+            print(f"High reward model saved to {high_reward_path}")
+            # Continue training to further improve performance
 
         # Print current episode stats (simplified for non-termination cases)
         if not (done or truncated):

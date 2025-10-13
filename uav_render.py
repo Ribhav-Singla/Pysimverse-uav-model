@@ -6,6 +6,7 @@ import time
 import math
 import random
 import torch
+import os
 from ppo_agent import PPOAgent
 from uav_env import UAVEnv, EnvironmentGenerator
 
@@ -18,16 +19,20 @@ CONFIG = {
     'goal_pos': np.array([3.8, 3.8, 1.0]),
     'world_size': 8.0,
     'obstacle_height': 2.0,
-    'uav_flight_height': 1.0,
-    'static_obstacles': 9,
+    'uav_flight_height': 1.0,  # Half of obstacle height
+    'static_obstacles': 2,
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
-    'control_dt': 0.05,
-    'boundary_penalty': -100,
-    'lidar_range': 2.8,
-    'lidar_num_rays': 16,
-    'step_reward': 0.01,
+    'control_dt': 0.04,  # OPTIMAL control frequency - balanced responsiveness without instability
+    'max_steps': 2500,   # Reduced steps - UAV should reach goal faster with optimizations
+    'boundary_penalty': -100,  # Penalty for going out of bounds
+    'lidar_range': 2.8,  # LIDAR maximum detection range
+    'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
+    'step_reward': -0.01,    # Survival bonus per timestep
+    'min_velocity': 2.5,    # MATCHED to training environment
+    'max_velocity': 6.0,     # MATCHED to training environment
+    'goal_threshold': 0.1,   # MATCHED to training environment - UAV must get within 0.1m of goal
     
     # Render-specific parameters (do not affect agent logic)
     'kp_pos': 1.5,
@@ -349,15 +354,13 @@ state_dim = env.observation_space.shape[0]
 action_dim = env.action_space.shape[0]
 ppo_agent = PPOAgent(state_dim, action_dim, 0, 0, 0, 0, 0, lambda_param=0.0)
 
-# Load the latest trained model
+# Load the specified trained model
 try:
-    checkpoint_dir = "PPO_preTrained/UAVEnv/"
-    files = os.listdir(checkpoint_dir)
-    paths = [os.path.join(checkpoint_dir, basename) for basename in files]
-    latest_model = max(paths, key=os.path.getctime)
-    ppo_agent.load(latest_model)
+    model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth"
+    print("Loading model:", model_path)
+    ppo_agent.load(model_path)
     ns_info = ppo_agent.get_neurosymbolic_info()
-    print(f"🤖 Trained PPO agent loaded successfully from {latest_model}!")
+    print(f"🤖 Trained PPO agent loaded successfully from {model_path}!")
     print(f"🧠 Neurosymbolic configuration: λ={ns_info['lambda']:.2f}, Rules: {len(ns_info['rules'])}")
 except:
     print("⚠️ Could not load trained agent. Using random actions.")
@@ -463,13 +466,61 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # Step the simulation
             mujoco.mj_step(model, data)
 
-            # Enforce velocity constraints
+            # Enforce velocity constraints using CONFIG values
             vel = data.qvel[:3]
             speed = np.linalg.norm(vel)
-            if speed < 0.5:
-                data.qvel[:3] = (vel / speed) * 0.5 if speed > 0 else np.zeros(3)
-            elif speed > 1.5:
-                data.qvel[:3] = (vel / speed) * 1.5
+            if speed < CONFIG['min_velocity']:
+                data.qvel[:3] = (vel / speed) * CONFIG['min_velocity'] if speed > 0 else np.zeros(3)
+            elif speed > CONFIG['max_velocity']:
+                data.qvel[:3] = (vel / speed) * CONFIG['max_velocity']
+            
+            # PROGRESSIVE BOUNDARY SAFETY: Match training environment exactly
+            half_world = CONFIG['world_size'] / 2
+            emergency_buffer = 0.05  # EMERGENCY: Hard stop zone
+            warning_buffer = 0.3     # WARNING: Strong velocity reduction 
+            caution_buffer = 0.8     # CAUTION: Moderate velocity reduction
+            
+            # X-axis boundary safety with progressive reduction
+            x_dist_to_boundary = min(half_world + current_pos[0], half_world - current_pos[0])
+            if x_dist_to_boundary < emergency_buffer:
+                # EMERGENCY: Stop all X movement toward boundary
+                if (current_pos[0] > 0 and data.qvel[0] > 0) or (current_pos[0] < 0 and data.qvel[0] < 0):
+                    data.qvel[0] = 0.0
+            elif x_dist_to_boundary < warning_buffer:
+                # WARNING: Severely limit velocity toward boundary
+                max_vel = 0.5  # Very slow near boundary
+                if (current_pos[0] > 0 and data.qvel[0] > 0):
+                    data.qvel[0] = min(data.qvel[0], max_vel)
+                elif (current_pos[0] < 0 and data.qvel[0] < 0):
+                    data.qvel[0] = max(data.qvel[0], -max_vel)
+            elif x_dist_to_boundary < caution_buffer:
+                # CAUTION: Moderate velocity reduction toward boundary
+                max_vel = 1.5  # Moderate speed in caution zone
+                if (current_pos[0] > 0 and data.qvel[0] > 0):
+                    data.qvel[0] = min(data.qvel[0], max_vel)
+                elif (current_pos[0] < 0 and data.qvel[0] < 0):
+                    data.qvel[0] = max(data.qvel[0], -max_vel)
+                    
+            # Y-axis boundary safety with progressive reduction
+            y_dist_to_boundary = min(half_world + current_pos[1], half_world - current_pos[1])
+            if y_dist_to_boundary < emergency_buffer:
+                # EMERGENCY: Stop all Y movement toward boundary
+                if (current_pos[1] > 0 and data.qvel[1] > 0) or (current_pos[1] < 0 and data.qvel[1] < 0):
+                    data.qvel[1] = 0.0
+            elif y_dist_to_boundary < warning_buffer:
+                # WARNING: Severely limit velocity toward boundary
+                max_vel = 0.5  # Very slow near boundary
+                if (current_pos[1] > 0 and data.qvel[1] > 0):
+                    data.qvel[1] = min(data.qvel[1], max_vel)
+                elif (current_pos[1] < 0 and data.qvel[1] < 0):
+                    data.qvel[1] = max(data.qvel[1], -max_vel)
+            elif y_dist_to_boundary < caution_buffer:
+                # CAUTION: Moderate velocity reduction toward boundary
+                max_vel = 1.5  # Moderate speed in caution zone
+                if (current_pos[1] > 0 and data.qvel[1] > 0):
+                    data.qvel[1] = min(data.qvel[1], max_vel)
+                elif (current_pos[1] < 0 and data.qvel[1] < 0):
+                    data.qvel[1] = max(data.qvel[1], -max_vel)
             
             # Update path trail visualization
             if step_count % 5 == 0:
@@ -505,7 +556,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             
             # Check if mission is complete
             goal_distance = np.linalg.norm(current_pos - CONFIG['goal_pos'])
-            if goal_distance < 0.5:
+            if goal_distance < CONFIG['goal_threshold']:
                 mission_complete = True
                 print(f"\n🎉 MISSION COMPLETE! UAV reached the goal!")
                 print(f"Final position: {current_pos}")

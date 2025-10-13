@@ -19,12 +19,14 @@ CONFIG = {
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
-    'control_dt': 0.05,
-    'max_steps': 50000,  # Max steps per episode
+    'control_dt': 0.04,  # OPTIMAL control frequency - balanced responsiveness without instability
+    'max_steps': 2500,   # Reduced steps - UAV should reach goal faster with optimizations
     'boundary_penalty': -100,  # Penalty for going out of bounds
     'lidar_range': 2.8,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
     'step_reward': -0.01,    # Survival bonus per timestep
+    'min_velocity': 1.5,    # BALANCED minimum velocity - not too fast to lose control
+    'max_velocity': 4.0,     # BALANCED maximum velocity - fast but controllable
 }
 
 class EnvironmentGenerator:
@@ -172,7 +174,7 @@ class UAVEnv(gym.Env):
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         
         # Action space: 3D velocity control (vx, vy, vz=0) - no Z-axis movement
-        self.action_space = spaces.Box(low=-2.0, high=2.0, shape=(3,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-CONFIG['max_velocity'], high=CONFIG['max_velocity'], shape=(3,), dtype=np.float32)
         
         self.viewer = None
         self.step_count = 0
@@ -205,13 +207,64 @@ class UAVEnv(gym.Env):
         mujoco.mj_step(self.model, self.data)
         self.step_count += 1
 
-        # Enforce horizontal velocity constraints only
+        # Enforce horizontal velocity constraints only using CONFIG values
         vel_xy = self.data.qvel[:2]
         speed_xy = np.linalg.norm(vel_xy)
-        if speed_xy < 0.3:
-            self.data.qvel[:2] = (vel_xy / speed_xy) * 0.3 if speed_xy > 0 else np.zeros(2)
-        elif speed_xy > 2.0:
-            self.data.qvel[:2] = (vel_xy / speed_xy) * 2.0
+        if speed_xy < CONFIG['min_velocity']:
+            self.data.qvel[:2] = (vel_xy / speed_xy) * CONFIG['min_velocity'] if speed_xy > 0 else np.zeros(2)
+        elif speed_xy > CONFIG['max_velocity']:
+            self.data.qvel[:2] = (vel_xy / speed_xy) * CONFIG['max_velocity']
+        
+        # PROGRESSIVE BOUNDARY SAFETY: Prevent going out of bounds with graduated velocity reduction
+        current_pos = self.data.qpos[:3]
+        half_world = CONFIG['world_size'] / 2
+        
+        # Progressive boundary safety zones
+        emergency_buffer = 0.05  # EMERGENCY: Hard stop zone
+        warning_buffer = 0.3     # WARNING: Strong velocity reduction 
+        caution_buffer = 0.8     # CAUTION: Moderate velocity reduction
+        
+        # X-axis boundary safety with progressive reduction
+        x_dist_to_boundary = min(half_world + current_pos[0], half_world - current_pos[0])
+        if x_dist_to_boundary < emergency_buffer:
+            # EMERGENCY: Stop all X movement toward boundary
+            if (current_pos[0] > 0 and self.data.qvel[0] > 0) or (current_pos[0] < 0 and self.data.qvel[0] < 0):
+                self.data.qvel[0] = 0.0
+        elif x_dist_to_boundary < warning_buffer:
+            # WARNING: Severely limit velocity toward boundary
+            max_vel = 0.5  # Very slow near boundary
+            if (current_pos[0] > 0 and self.data.qvel[0] > 0):
+                self.data.qvel[0] = min(self.data.qvel[0], max_vel)
+            elif (current_pos[0] < 0 and self.data.qvel[0] < 0):
+                self.data.qvel[0] = max(self.data.qvel[0], -max_vel)
+        elif x_dist_to_boundary < caution_buffer:
+            # CAUTION: Moderate velocity reduction toward boundary
+            max_vel = 1.5  # Moderate speed in caution zone
+            if (current_pos[0] > 0 and self.data.qvel[0] > 0):
+                self.data.qvel[0] = min(self.data.qvel[0], max_vel)
+            elif (current_pos[0] < 0 and self.data.qvel[0] < 0):
+                self.data.qvel[0] = max(self.data.qvel[0], -max_vel)
+                
+        # Y-axis boundary safety with progressive reduction
+        y_dist_to_boundary = min(half_world + current_pos[1], half_world - current_pos[1])
+        if y_dist_to_boundary < emergency_buffer:
+            # EMERGENCY: Stop all Y movement toward boundary
+            if (current_pos[1] > 0 and self.data.qvel[1] > 0) or (current_pos[1] < 0 and self.data.qvel[1] < 0):
+                self.data.qvel[1] = 0.0
+        elif y_dist_to_boundary < warning_buffer:
+            # WARNING: Severely limit velocity toward boundary
+            max_vel = 0.5  # Very slow near boundary
+            if (current_pos[1] > 0 and self.data.qvel[1] > 0):
+                self.data.qvel[1] = min(self.data.qvel[1], max_vel)
+            elif (current_pos[1] < 0 and self.data.qvel[1] < 0):
+                self.data.qvel[1] = max(self.data.qvel[1], -max_vel)
+        elif y_dist_to_boundary < caution_buffer:
+            # CAUTION: Moderate velocity reduction toward boundary
+            max_vel = 1.5  # Moderate speed in caution zone
+            if (current_pos[1] > 0 and self.data.qvel[1] > 0):
+                self.data.qvel[1] = min(self.data.qvel[1], max_vel)
+            elif (current_pos[1] < 0 and self.data.qvel[1] < 0):
+                self.data.qvel[1] = max(self.data.qvel[1], -max_vel)
         
         # Always ensure Z position stays constant
         self.data.qpos[2] = CONFIG['uav_flight_height']
@@ -614,8 +667,8 @@ class UAVEnv(gym.Env):
             termination_info['collision_detected'] = True
             return reward, termination_info
             
-        # Check if goal is reached
-        if goal_dist < 0.5:
+        # Check if goal is reached - REDUCED to very precise threshold
+        if goal_dist <= 0.2:  # Much more precise goal achievement requirement
             reward = 100
             termination_info['terminated'] = True
             termination_info['termination_reason'] = 'goal_reached'
@@ -631,14 +684,23 @@ class UAVEnv(gym.Env):
         # Using world_size instead of hard-coded 8.0 to maintain consistent rewards
         reward += max(0, (CONFIG['world_size'] - goal_dist) / 80.0)  # Scale to small positive value
         
-        # --- Relative Reward based on Proximity ---
-        # Reward for making progress towards the goal
+        # --- Enhanced Progress and Anti-Stagnation Rewards ---
         progress = self.prev_goal_dist - goal_dist
-        progress_reward = 2.0 * progress  # Scale the reward
+        progress_reward = 3.0 * progress  # INCREASED progress reward
         
-        # Increase reward when close to the goal
+        # Strong bonus for getting very close to goal
         if goal_dist < 3:  # Proximity threshold of 3m
-            progress_reward *= 1.2
+            progress_reward *= 1.5  # INCREASED multiplier
+        if goal_dist < 1.5:  # Very close to goal
+            progress_reward *= 2.0  # EXTRA bonus for final approach
+            
+        # Penalty for stagnation (not making progress)
+        if abs(progress) < 0.01:  # Very little progress
+            reward -= 0.05  # Small penalty for stagnation
+            
+        # Penalty for moving away from goal
+        if progress < -0.01:  # Moving away from goal
+            reward -= 0.1  # Penalty for wrong direction
             
         reward += progress_reward
         self.prev_goal_dist = goal_dist
