@@ -54,12 +54,12 @@ def main():
     #############################################
 
     # Neurosymbolic config (opt-in, lambda=0 by default)
-    use_neurosymbolic = True
     ns_lambda = 0.0  # initial lambda set to 0 as requested
+    use_neurosymbolic = (ns_lambda >= 1.0)  # Off for RL-only baseline when lambda=0
     ns_cfg = {
         'use_neurosymbolic': use_neurosymbolic,
         'lambda': ns_lambda,
-        'warmup_steps': 20,
+        'warmup_steps': 100,
         'high_speed': 0.9,
         'blocked_strength': 0.1
     }
@@ -287,10 +287,13 @@ def main():
             action, log_prob = ppo_agent.select_action(state)
 
             # Binary neurosymbolic gating: lambda in {0,1}
-            # - If ns_lambda == 1: use only symbolic action
+            # - If ns_lambda == 1: use symbolic when LOS is clear or during warmup; else fallback to RL
             # - If ns_lambda == 0: use only RL action
             if use_neurosymbolic and ns_lambda is not None and ns_lambda >= 1.0:
-                action = env.symbolic_action()
+                warmup_steps = int(getattr(env, 'ns_cfg', {}).get('warmup_steps', 20))
+                use_symbolic_now = (env._episode_timestep < warmup_steps) or env.has_line_of_sight_to_goal()
+                if use_symbolic_now:
+                    action = env.symbolic_action()
             
             # Save state, action, and log probability
             memory.states.append(state)

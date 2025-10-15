@@ -294,21 +294,9 @@ class UAVEnv(gym.Env):
         if episode < 100:
             return 0.05, 0.2   # SUPER SLOW: Nearly stationary for initial learning
         elif episode < 300:
-            return 0.05, 0.3   # Very slow
-        elif episode < 500:
-            return 0.08, 0.4   # Still slow but slightly faster
-        elif episode < 1000:
-            return 0.1, 0.5    # Min: 0.1 m/s, Max: 0.5 m/s (SLOW - learning phase)
-        elif episode < 1500:
-            return 0.12, 0.7   # Gradually increasing
-        elif episode < 2000:
-            return 0.15, 0.9   # Min: 0.15 m/s, Max: 0.9 m/s
-        elif episode < 3000:
-            return 0.2, 1.2    # Min: 0.2 m/s, Max: 1.2 m/s
-        elif episode < 4000:
-            return 0.25, 1.5   # Min: 0.25 m/s, Max: 1.5 m/s
+            return 0.05, 0.3      
         else:
-            return 0.3, 2.0    # Min: 0.3 m/s, Max: 2.0 m/s (FULL SPEED)
+            return 0, 1.0    
     
     def step(self, action):
         # Track per-episode timestep
@@ -323,15 +311,25 @@ class UAVEnv(gym.Env):
         action = np.array(action).flatten()
         
         # Add goal-directed bias to action in early training
-        # This helps the agent initially learn to move toward goal
+        # Restore baseline behavior when neurosymbolic is off; use non-negative only when active
         if self.current_episode < 200:  # Only in early training
             pos = self.data.qpos[:3]
             goal_vector = CONFIG['goal_pos'] - pos
             goal_direction = goal_vector / (np.linalg.norm(goal_vector) + 1e-8)  # Normalized goal direction
-            
-            # Blend action with goal direction (50% agent action, 50% goal bias)
             bias_strength = max(0, (200 - self.current_episode) / 200)  # Fade out bias over first 200 episodes
-            action[:2] = (1 - bias_strength * 0.5) * action[:2] + (bias_strength * 0.5) * goal_direction[:2]
+            if self.ns_cfg.get('use_neurosymbolic', False) and float(self.ns_cfg.get('lambda', 0.0)) >= 1.0:
+                # Project to non-negative action space [0,1] by zeroing negatives and renormalizing
+                goal_dir_pos = np.array([
+                    max(0.0, float(goal_direction[0])),
+                    max(0.0, float(goal_direction[1]))
+                ], dtype=np.float32)
+                norm_g = float(np.linalg.norm(goal_dir_pos) + 1e-8)
+                if norm_g > 0:
+                    goal_dir_pos /= norm_g
+                action[:2] = (1 - bias_strength * 0.5) * action[:2] + (bias_strength * 0.5) * goal_dir_pos
+            else:
+                # Baseline: allow signed directions as before
+                action[:2] = (1 - bias_strength * 0.5) * action[:2] + (bias_strength * 0.5) * goal_direction[:2]
         
         # VELOCITY CURRICULUM: Get current velocity limits
         min_vel, max_vel = self._get_velocity_limits()
@@ -538,15 +536,26 @@ class UAVEnv(gym.Env):
 
         dir_xy, _ = self.get_goal_vector()
 
-        if t_step < warmup_steps:
-            speed = min(0.3, high_speed)  # moderate speed at start
-        elif self.has_line_of_sight_to_goal():
-            speed = min(high_speed, 1.0)  # cap to action_space.high
-        else:
-            speed = max(0.0, min(blocked_strength, 1.0))  # gentle nudge when blocked
+        # Respect current velocity curriculum but cap by action space max (assumed 1.0)
+        _, max_vel = self._get_velocity_limits()
+        action_cap = float(np.max(self.action_space.high)) if np.ndim(self.action_space.high) == 0 else float(self.action_space.high[0])
+        max_action_speed = min(max_vel, action_cap)
 
-        vx = float(speed * dir_xy[0])
-        vy = float(speed * dir_xy[1])
+        if t_step < warmup_steps:
+            speed = 0.5 * max_action_speed  # moderate speed at start
+        elif self.has_line_of_sight_to_goal():
+            speed = min(high_speed, max_action_speed)
+        else:
+            speed = max(0.0, min(blocked_strength * max_action_speed, max_action_speed))  # gentle nudge when blocked
+
+        # Map to non-negative action space [0, 1] by dropping negative components
+        dir_pos = np.array([max(0.0, float(dir_xy[0])), max(0.0, float(dir_xy[1]))], dtype=np.float32)
+        norm = float(np.linalg.norm(dir_pos) + 1e-8)
+        if norm > 0:
+            dir_pos /= norm
+        # Construct action in env units
+        vx = float(speed * dir_pos[0])
+        vy = float(speed * dir_pos[1])
         vz = 0.0
         a = np.array([vx, vy, vz], dtype=np.float32)
         # Clip to action bounds
