@@ -29,18 +29,18 @@ def main():
     # Curriculum Learning Parameters
     curriculum_learning = True
     episodes_per_level_count = 500  # Episodes per curriculum level
-    total_levels = 10           # Obstacle levels 1-10
+    total_levels = 5           # Obstacle levels 1-10
     
     # Set equal episodes for each level
     episodes_per_level = [episodes_per_level_count] * total_levels
-    total_episodes = episodes_per_level_count * total_levels  # 500 * 10 = 5000 episodes
+    total_episodes = episodes_per_level_count * total_levels  # 500 * 5 = 2500 episodes
     
     max_episodes = total_episodes
-    max_timesteps = 2500         # Match env max_steps
+    max_timesteps = 3000         # Match env max_steps
 
     update_timestep = 512       # FURTHER REDUCED for very frequent updates to break stagnation
     action_std = 0.6            # SIGNIFICANTLY INCREASED exploration to break oscillation patterns
-    K_epochs = 6                # FURTHER REDUCED for more responsive policy changes
+    K_epochs = 5                # FURTHER REDUCED for more responsive policy changes
     eps_clip = 0.3              # INCREASED for larger policy updates - escape local optima
     gamma = 0.98                # FURTHER REDUCED for immediate reward focus
 

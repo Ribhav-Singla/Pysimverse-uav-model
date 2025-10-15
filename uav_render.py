@@ -25,14 +25,14 @@ CONFIG = {
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
     'control_dt': 0.04,  # OPTIMAL control frequency - balanced responsiveness without instability
-    'max_steps': 2500,   # Reduced steps - UAV should reach goal faster with optimizations
+    'max_steps': 3000,   # Reduced steps - UAV should reach goal faster with optimizations
     'boundary_penalty': -100,  # Penalty for going out of bounds
     'lidar_range': 2.8,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
-    'step_reward': -0.01,    # Survival bonus per timestep
-    'min_velocity': 2.5,    # MATCHED to training environment
-    'max_velocity': 6.0,     # MATCHED to training environment
-    'goal_threshold': 0.1,   # MATCHED to training environment - UAV must get within 0.1m of goal
+    'step_reward': -0.005,    # Reduced time penalty to encourage exploration
+    'min_velocity': 0.0,    # MATCHED to training environment - allow stopping
+    'max_velocity': 2.0,     # MATCHED to training environment
+    'goal_threshold': 0.2,   # MATCHED to training environment - UAV must get within 0.2m of goal
     
     # Render-specific parameters (do not affect agent logic)
     'kp_pos': 1.5,

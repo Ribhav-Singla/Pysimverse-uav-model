@@ -20,13 +20,14 @@ CONFIG = {
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
     'control_dt': 0.04,  # OPTIMAL control frequency - balanced responsiveness without instability
-    'max_steps': 2500,   # Reduced steps - UAV should reach goal faster with optimizations
+    'max_steps': 3000,   # Reduced steps - UAV should reach goal faster with optimizations
     'boundary_penalty': -100,  # Penalty for going out of bounds
     'lidar_range': 2.8,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
-    'step_reward': -0.01,    # Survival bonus per timestep
-    'min_velocity': 1.5,    # BALANCED minimum velocity - not too fast to lose control
-    'max_velocity': 4.0,     # BALANCED maximum velocity - fast but controllable
+    'step_reward': -0.005,    # Reduced time penalty to encourage exploration
+    'min_velocity': 0.0,    # FIXED: Allow very slow and precise movements including stopping
+    'max_velocity': 2.0,     # FIXED: Reasonable maximum for 8x8m environment (was 6.0 - way too fast!)
+    'goal_threshold': 0.2,   # Training uses 0.2m - agent was never trained for 0.1m precision!
 }
 
 class EnvironmentGenerator:
@@ -196,26 +197,23 @@ class UAVEnv(gym.Env):
             action = action.numpy()
         action = np.array(action).flatten()
         
-        # Apply velocity control with constant height
-        self.data.qvel[0] = float(action[0])  # X velocity
-        self.data.qvel[1] = float(action[1])  # Y velocity  
+        # Apply velocity control with constant height - ensure actions are within bounds
+        max_vel = CONFIG['max_velocity']
+        self.data.qvel[0] = float(np.clip(action[0], -max_vel, max_vel))  # X velocity
+        self.data.qvel[1] = float(np.clip(action[1], -max_vel, max_vel))  # Y velocity  
         self.data.qvel[2] = 0.0               # Z velocity = 0 (no vertical movement)
         
         # Maintain constant height
         self.data.qpos[2] = CONFIG['uav_flight_height']
         
-        mujoco.mj_step(self.model, self.data)
-        self.step_count += 1
-
-        # Enforce horizontal velocity constraints only using CONFIG values
+        # Enforce horizontal velocity constraints BEFORE physics step
         vel_xy = self.data.qvel[:2]
         speed_xy = np.linalg.norm(vel_xy)
-        if speed_xy < CONFIG['min_velocity']:
-            self.data.qvel[:2] = (vel_xy / speed_xy) * CONFIG['min_velocity'] if speed_xy > 0 else np.zeros(2)
-        elif speed_xy > CONFIG['max_velocity']:
+        # Only clamp maximum velocity, allow any speed >= 0 including stopping
+        if speed_xy > CONFIG['max_velocity']:
             self.data.qvel[:2] = (vel_xy / speed_xy) * CONFIG['max_velocity']
         
-        # PROGRESSIVE BOUNDARY SAFETY: Prevent going out of bounds with graduated velocity reduction
+        # PROGRESSIVE BOUNDARY SAFETY: Apply BEFORE physics step to prevent boundary violations
         current_pos = self.data.qpos[:3]
         half_world = CONFIG['world_size'] / 2
         
@@ -267,6 +265,35 @@ class UAVEnv(gym.Env):
                 self.data.qvel[1] = max(self.data.qvel[1], -max_vel)
         
         # Always ensure Z position stays constant
+        self.data.qpos[2] = CONFIG['uav_flight_height']
+        self.data.qvel[2] = 0.0
+        
+        # NOW run physics step AFTER boundary safety is applied
+        mujoco.mj_step(self.model, self.data)
+        self.step_count += 1
+        
+        # EMERGENCY BOUNDARY CORRECTION: Force UAV back inside boundaries if it somehow escaped
+        final_pos = self.data.qpos[:3]
+        half_world = CONFIG['world_size'] / 2
+        emergency_margin = 0.01  # 1cm safety margin from boundary
+        
+        # Clamp X position
+        if final_pos[0] > half_world - emergency_margin:
+            self.data.qpos[0] = half_world - emergency_margin
+            self.data.qvel[0] = 0.0  # Stop X movement
+        elif final_pos[0] < -half_world + emergency_margin:
+            self.data.qpos[0] = -half_world + emergency_margin
+            self.data.qvel[0] = 0.0  # Stop X movement
+            
+        # Clamp Y position  
+        if final_pos[1] > half_world - emergency_margin:
+            self.data.qpos[1] = half_world - emergency_margin
+            self.data.qvel[1] = 0.0  # Stop Y movement
+        elif final_pos[1] < -half_world + emergency_margin:
+            self.data.qpos[1] = -half_world + emergency_margin
+            self.data.qvel[1] = 0.0  # Stop Y movement
+        
+        # Always maintain constant Z
         self.data.qpos[2] = CONFIG['uav_flight_height']
         self.data.qvel[2] = 0.0
         
@@ -333,12 +360,40 @@ class UAVEnv(gym.Env):
     def render(self):
         if self.render_mode == "human":
             if self.viewer is None:
-                self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
-            self.viewer.sync()
+                try:
+                    # Try new MuJoCo viewer API first
+                    self.viewer = mujoco.viewer.launch_passive(self.model, self.data)
+                except AttributeError:
+                    # Fall back to older API
+                    import mujoco.viewer as viewer
+                    self.viewer = viewer.launch_passive(self.model, self.data)
+                except:
+                    # If viewer doesn't work, use GLFWRenderer for compatibility
+                    try:
+                        from mujoco import GLFWRenderer
+                        self.viewer = GLFWRenderer(self.model)
+                    except:
+                        print("⚠️ Could not initialize MuJoCo viewer. Running headless.")
+                        self.viewer = None
+                        return
+            
+            if self.viewer is not None:
+                try:
+                    if hasattr(self.viewer, 'sync'):
+                        self.viewer.sync()
+                    elif hasattr(self.viewer, 'render'):
+                        self.viewer.render()
+                except:
+                    pass
 
     def close(self):
         if self.viewer:
-            self.viewer.close()
+            try:
+                if hasattr(self.viewer, 'close'):
+                    self.viewer.close()
+            except:
+                pass
+        self.viewer = None
     
     def _get_random_goal_position(self):
         """Select a random goal position from the three available corners (excluding start position)"""
@@ -667,18 +722,28 @@ class UAVEnv(gym.Env):
             termination_info['collision_detected'] = True
             return reward, termination_info
             
-        # Check if goal is reached - REDUCED to very precise threshold
-        if goal_dist <= 0.2:  # Much more precise goal achievement requirement
+        # Check if goal is reached - Use CONFIG threshold for consistency
+        goal_threshold = CONFIG.get('goal_threshold', 0.2)  # Default 0.2m if not specified
+        if goal_dist <= goal_threshold:
             reward = 100
             termination_info['terminated'] = True
             termination_info['termination_reason'] = 'goal_reached'
             return reward, termination_info
         
-        # Reward for moving towards the goal (only horizontal movement)
+        # Enhanced reward for moving towards the goal (only horizontal movement)
         goal_direction = (CONFIG['goal_pos'] - pos)[:2]  # Only X,Y components
         vel_horizontal = vel[:2]
-        if np.dot(vel_horizontal, goal_direction) > 0:
-            reward += 0.1 * np.dot(vel_horizontal, goal_direction) / np.linalg.norm(goal_direction)
+        
+        # Calculate velocity alignment with goal direction
+        goal_dir_norm = np.linalg.norm(goal_direction)
+        vel_norm = np.linalg.norm(vel_horizontal)
+        
+        if goal_dir_norm > 0 and vel_norm > 0:
+            # Normalized dot product for velocity alignment (-1 to 1)
+            alignment = np.dot(vel_horizontal, goal_direction) / (goal_dir_norm * vel_norm)
+            # Strong reward for moving toward goal, penalty for moving away
+            velocity_reward = 2.0 * alignment * vel_norm  # Scale by velocity magnitude
+            reward += velocity_reward
 
         # Distance-based reward (closer to goal = higher reward)
         # Using world_size instead of hard-coded 8.0 to maintain consistent rewards
