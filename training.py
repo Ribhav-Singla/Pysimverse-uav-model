@@ -31,7 +31,7 @@ def main():
     
     # Curriculum Learning Parameters
     curriculum_learning = True
-    episodes_per_level_count = 300  # Episodes per curriculum level (equal for all levels)
+    episodes_per_level_count = 100  # Episodes per curriculum level (equal for all levels)
     total_levels = 10           # Obstacle levels 1-10
     
     # Set equal episodes for each level
@@ -54,14 +54,23 @@ def main():
     #############################################
 
     # Neurosymbolic config (opt-in, lambda=0 by default)
-    ns_lambda = 0.0  # initial lambda set to 0 as requested
-    use_neurosymbolic = (ns_lambda >= 1.0)  # Off for RL-only baseline when lambda=0
+    # Neurosymbolic gating schedule: enable λ=1 for early episodes
+    # Alternating neurosymbolic gating across episodes (odd: 1, even: 0)
+    ns_lambda = 1.0  # will be updated per-episode below
+    use_neurosymbolic = False  # will be set per-episode below
     ns_cfg = {
         'use_neurosymbolic': use_neurosymbolic,
         'lambda': ns_lambda,
         'warmup_steps': 100,
         'high_speed': 0.9,
-        'blocked_strength': 0.1
+        'blocked_strength': 0.1,
+        # Robust LOS / cooldown / distance-aware defaults
+        'los_angle_margin_deg': 5.0,
+        'los_confirm_steps': 3,
+        'near_miss_threshold_m': 0.5,
+        'near_miss_cooldown_steps': 10,
+        'distance_far_m': 3.0,
+        'distance_min_scale': 0.4
     }
 
     # creating environment with curriculum learning
@@ -255,6 +264,11 @@ def main():
                 print(f"   - Target episodes: {episodes_per_level[current_level_index]}")
                 print("-" * 60)
         
+        # Update per-episode lambda and neurosymbolic active flag
+        # λ alternates per episode: 1 for odd episodes, 0 for even episodes
+        ns_lambda = 1.0 if (i_episode % 2 == 1) else 0.0
+        use_neurosymbolic = (ns_lambda >= 1.0)
+
         state, _ = env.reset()
         # Set current episode number for CSV logging and adaptive thresholds
         env.current_episode = i_episode
@@ -283,24 +297,46 @@ def main():
             
         for t in range(max_timesteps):
             time_step +=1
-            # Running policy_old:
-            action, log_prob = ppo_agent.select_action(state)
+            # Running policy_old to get PPO proposal
+            ppo_action, ppo_log_prob = ppo_agent.select_action(state)
+            # Ensure PPO action has consistent shape (1, action_dim)
+            ppo_action_np = np.array(ppo_action, dtype=np.float32)
+            if ppo_action_np.ndim == 1:
+                ppo_action_np = np.expand_dims(ppo_action_np, axis=0)
 
-            # Binary neurosymbolic gating: lambda in {0,1}
-            # - If ns_lambda == 1: use symbolic when LOS is clear or during warmup; else fallback to RL
-            # - If ns_lambda == 0: use only RL action
-            if use_neurosymbolic and ns_lambda is not None and ns_lambda >= 1.0:
+            # Decide final action with binary neurosymbolic gating per-episode
+            final_action = ppo_action_np
+            if use_neurosymbolic:
                 warmup_steps = int(getattr(env, 'ns_cfg', {}).get('warmup_steps', 20))
                 use_symbolic_now = (env._episode_timestep < warmup_steps) or env.has_line_of_sight_to_goal()
                 if use_symbolic_now:
-                    action = env.symbolic_action()
+                    sym = np.array(env.symbolic_action(), dtype=np.float32)
+                    if sym.ndim == 1:
+                        sym = np.expand_dims(sym, axis=0)
+                    final_action = sym
+                    if (t % 100) == 0:
+                        print(f"[NS] Episode {i_episode} Step {t}: Using symbolic action (warmup={env._episode_timestep < warmup_steps}, LOS={use_symbolic_now and env.has_line_of_sight_to_goal()})")
+
+            # Compute log_prob of the executed action under old policy (for PPO update)
+            try:
+                state_tensor = torch.FloatTensor(state)
+                action_mean = ppo_agent.policy_old.actor(state_tensor)
+                cov_mat = torch.diag(ppo_agent.policy_old.action_var).unsqueeze(dim=0)
+                from torch.distributions import MultivariateNormal
+                dist = MultivariateNormal(action_mean, cov_mat)
+                action_tensor = torch.FloatTensor(final_action)
+                exec_log_prob = dist.log_prob(action_tensor).detach().numpy().astype(np.float32)
+            except Exception:
+                # Fallback to PPO-sampled log prob (should rarely happen)
+                exec_log_prob = np.array(ppo_log_prob, dtype=np.float32)
+
+            # Save state, executed action, and its log probability (homogeneous shapes)
+            memory.states.append(np.array(state, dtype=np.float32))
+            memory.actions.append(final_action)
+            memory.logprobs.append(exec_log_prob)
             
-            # Save state, action, and log probability
-            memory.states.append(state)
-            memory.actions.append(action)
-            memory.logprobs.append(log_prob)
-            
-            state, reward, done, truncated, _ = env.step(action)
+            # Env expects flat action; it will flatten anyway, but ensure (action_dim,)
+            state, reward, done, truncated, _ = env.step(final_action.flatten())
 
             # Saving reward and is_terminals:
             memory.rewards.append(reward)

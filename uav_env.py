@@ -284,6 +284,9 @@ class UAVEnv(gym.Env):
 
         # Episode-local timestep counter (for neurosymbolic warmup logic)
         self._episode_timestep = 0
+        # Neurosymbolic LOS confirmation and cooldown tracking
+        self._ns_los_confirm_count = 0
+        self._ns_cooldown_steps_remaining = 0
 
     def _get_velocity_limits(self):
         """Get adaptive velocity limits based on training progress (velocity curriculum)"""
@@ -426,6 +429,17 @@ class UAVEnv(gym.Env):
         self.data.qvel[2] = 0.0
         
         obs = self._get_obs()
+        # Update near-miss cooldown when neurosymbolic is active
+        if self.ns_cfg.get('use_neurosymbolic', False) and float(self.ns_cfg.get('lambda', 0.0)) >= 1.0:
+            lidar_vals = obs[9:25]
+            min_norm = float(np.min(lidar_vals))
+            lidar_min_m = min_norm * CONFIG['lidar_range']
+            near_miss_thresh = float(self.ns_cfg.get('near_miss_threshold_m', 0.5))
+            cooldown_steps = int(self.ns_cfg.get('near_miss_cooldown_steps', 10))
+            if lidar_min_m < near_miss_thresh:
+                self._ns_cooldown_steps_remaining = cooldown_steps
+            elif self._ns_cooldown_steps_remaining > 0:
+                self._ns_cooldown_steps_remaining -= 1
         reward, termination_info = self._get_reward_and_termination_info(obs)
         terminated = termination_info['terminated']
         truncated = self.step_count >= CONFIG['max_steps']
@@ -445,6 +459,8 @@ class UAVEnv(gym.Env):
         super().reset(seed=seed)
         self.step_count = 0
         self._episode_timestep = 0
+        self._ns_los_confirm_count = 0
+        self._ns_cooldown_steps_remaining = 0
         
         # Set dynamic goal position (randomly select from three available corners)
         CONFIG['goal_pos'] = self._get_random_goal_position()
@@ -509,25 +525,44 @@ class UAVEnv(gym.Env):
         return dir_xy, dist
 
     def has_line_of_sight_to_goal(self):
-        """Approximate LOS by raycasting from UAV to goal against obstacles in XY plane."""
+        """LOS check with angular safety margin and confirmation steps; disabled during cooldown."""
         pos = self.data.qpos[:3]
         goal_vec = CONFIG['goal_pos'] - pos
         goal_dist = float(np.linalg.norm(goal_vec[:2]))
         if goal_dist <= 1e-6:
             return True
+        # Disable LOS during cooldown
+        if self._ns_cooldown_steps_remaining > 0:
+            self._ns_los_confirm_count = 0
+            return False
+        # Angular margin (degrees -> radians)
+        ang_margin_deg = float(self.ns_cfg.get('los_angle_margin_deg', 5.0))
+        ang_margin = np.radians(ang_margin_deg)
+        # Base ray
         ray_dir = np.array([goal_vec[0], goal_vec[1], 0.0]) / (goal_dist + 1e-8)
+        # Rotate helper
+        def rot(vec, ang):
+            c, s = np.cos(ang), np.sin(ang)
+            return np.array([c*vec[0]-s*vec[1], s*vec[0]+c*vec[1], 0.0])
+        rays = [ray_dir, rot(ray_dir, ang_margin), rot(ray_dir, -ang_margin)]
         min_obs_dist = CONFIG['lidar_range']
-        for obs in self.obstacles:
-            obs_dist = self._ray_obstacle_intersection(pos, ray_dir, obs)
-            if obs_dist < min_obs_dist:
-                min_obs_dist = obs_dist
-        # LOS if closest obstacle along ray is farther than goal distance
-        return min_obs_dist >= goal_dist - 1e-6
+        for rd in rays:
+            for obs in self.obstacles:
+                obs_dist = self._ray_obstacle_intersection(pos, rd, obs)
+                if obs_dist < min_obs_dist:
+                    min_obs_dist = obs_dist
+        los_now = (min_obs_dist >= goal_dist - 1e-6)
+        confirm_k = int(self.ns_cfg.get('los_confirm_steps', 3))
+        if los_now:
+            self._ns_los_confirm_count = min(self._ns_los_confirm_count + 1, confirm_k)
+        else:
+            self._ns_los_confirm_count = 0
+        return self._ns_los_confirm_count >= confirm_k
 
     def symbolic_action(self, t_step=None):
         """Compute a simple goal-directed action in env action space (vx, vy, vz=0)."""
         # Read cfg with fallbacks
-        warmup_steps = int(self.ns_cfg.get('warmup_steps', 20))
+        warmup_steps = int(self.ns_cfg.get('warmup_steps', 200))
         high_speed = float(self.ns_cfg.get('high_speed', 0.9))
         blocked_strength = float(self.ns_cfg.get('blocked_strength', 0.1))
 
@@ -541,12 +576,19 @@ class UAVEnv(gym.Env):
         action_cap = float(np.max(self.action_space.high)) if np.ndim(self.action_space.high) == 0 else float(self.action_space.high[0])
         max_action_speed = min(max_vel, action_cap)
 
+        # Distance-aware speed scaling (taper near goal)
+        pos = self.data.qpos[:3]
+        goal_dist_xy = float(np.linalg.norm((CONFIG['goal_pos'] - pos)[:2]))
+        far_dist = float(self.ns_cfg.get('distance_far_m', 3.0))
+        min_scale = float(self.ns_cfg.get('distance_min_scale', 0.4))
+        dist_scale = max(min_scale, min(1.0, goal_dist_xy / max(far_dist, 1e-6)))
+
         if t_step < warmup_steps:
-            speed = 0.5 * max_action_speed  # moderate speed at start
+            speed = dist_scale * 0.6 * max_action_speed
         elif self.has_line_of_sight_to_goal():
-            speed = min(high_speed, max_action_speed)
+            speed = dist_scale * min(high_speed, max_action_speed)
         else:
-            speed = max(0.0, min(blocked_strength * max_action_speed, max_action_speed))  # gentle nudge when blocked
+            speed = dist_scale * max(0.0, min(blocked_strength * max_action_speed, max_action_speed))
 
         # Map to non-negative action space [0, 1] by dropping negative components
         dir_pos = np.array([max(0.0, float(dir_xy[0])), max(0.0, float(dir_xy[1]))], dtype=np.float32)
