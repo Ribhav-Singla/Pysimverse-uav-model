@@ -3,6 +3,9 @@ import numpy as np
 from uav_env import UAVEnv, CONFIG
 from ppo_agent import PPOAgent
 import os
+import matplotlib
+matplotlib.use('Agg')  # non-interactive backend for saving plots
+import matplotlib.pyplot as plt
 
 class Memory:
     def __init__(self):
@@ -50,8 +53,19 @@ def main():
     random_seed = 0
     #############################################
 
+    # Neurosymbolic config (opt-in, lambda=0 by default)
+    use_neurosymbolic = True
+    ns_lambda = 0.0  # initial lambda set to 0 as requested
+    ns_cfg = {
+        'use_neurosymbolic': use_neurosymbolic,
+        'lambda': ns_lambda,
+        'warmup_steps': 20,
+        'high_speed': 0.9,
+        'blocked_strength': 0.1
+    }
+
     # creating environment with curriculum learning
-    env = UAVEnv(curriculum_learning=curriculum_learning)
+    env = UAVEnv(curriculum_learning=curriculum_learning, ns_cfg=ns_cfg)
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
 
@@ -80,6 +94,50 @@ def main():
     memory = Memory()
     ppo_agent = PPOAgent(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, action_std)
     
+    # === Metrics tracking ===
+    episode_indices = []
+    episode_rewards_list = []
+    episode_success_list = []  # 1 if goal reached this episode else 0
+
+    def save_training_plots():
+        if len(episode_indices) == 0:
+            return
+        # Compute rolling averages (window 50)
+        window = min(50, len(episode_rewards_list))
+        rewards_np = np.array(episode_rewards_list, dtype=float)
+        success_np = np.array(episode_success_list, dtype=float)
+        if window > 1:
+            roll_rewards = np.convolve(rewards_np, np.ones(window)/window, mode='valid')
+            roll_success = np.convolve(success_np, np.ones(window)/window, mode='valid')
+            x_roll = episode_indices[window-1:]
+        else:
+            roll_rewards = rewards_np
+            roll_success = success_np
+            x_roll = episode_indices
+
+        plt.figure(figsize=(10, 6))
+        plt.subplot(2, 1, 1)
+        plt.plot(episode_indices, rewards_np, color='lightgray', label='Reward')
+        plt.plot(x_roll, roll_rewards, color='blue', label=f'Reward MA({window})')
+        plt.xlabel('Episode')
+        plt.ylabel('Reward')
+        plt.title('Episode Reward')
+        plt.legend(loc='best')
+        plt.grid(True, alpha=0.3)
+
+        plt.subplot(2, 1, 2)
+        plt.plot(episode_indices, success_np, '.', color='lightgray', label='Success (0/1)')
+        plt.plot(x_roll, roll_success, color='green', label=f'Success Rate MA({window})')
+        plt.xlabel('Episode')
+        plt.ylabel('Success')
+        plt.title('Goal Reached')
+        plt.ylim(-0.05, 1.05)
+        plt.legend(loc='best')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig('training_metrics.png', dpi=150)
+        plt.close()
+
     print("--------------------------------------------------------------------------------------------")
     print("🚀 OPTIMIZED PPO TRAINING CONFIGURATION")
     print("--------------------------------------------------------------------------------------------")
@@ -227,6 +285,16 @@ def main():
             time_step +=1
             # Running policy_old:
             action, log_prob = ppo_agent.select_action(state)
+
+            # Neurosymbolic blending (action = lambda*sym + (1-lambda)*rl)
+            if use_neurosymbolic and ns_lambda is not None:
+                sym_action = env.symbolic_action()
+                # Ensure numpy arrays
+                rl_action_np = np.array(action, dtype=np.float32)
+                blended = ns_lambda * sym_action + (1.0 - ns_lambda) * rl_action_np
+                # Clip to action bounds
+                blended = np.clip(blended, env.action_space.low, env.action_space.high)
+                action = blended
             
             # Save state, action, and log probability
             memory.states.append(state)
@@ -301,6 +369,13 @@ def main():
                 episode_length=episode_length,
                 termination_info=termination_info
             )
+
+        # === Metrics tracking ===
+        episode_indices.append(i_episode)
+        episode_rewards_list.append(episode_reward)
+        term_reason = termination_info.get('termination_reason', '') if 'termination_info' in locals() else getattr(env, 'last_termination_info', {}).get('termination_reason', '')
+        success_flag = 1 if term_reason in ['goal_reached', 'goal_reached_and_stabilized'] else 0
+        episode_success_list.append(success_flag)
 
         # Save model when goal is reached (but continue training)
         if episode_reward > solved_reward:
@@ -382,6 +457,9 @@ def main():
             else:
                 print(f"📝 Model updated (best: {best_reward:.1f})")
             print("=" * 50)
+
+            # Save metrics plot periodically
+            save_training_plots()
 
 if __name__ == '__main__':
     main()

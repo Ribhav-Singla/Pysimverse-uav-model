@@ -224,10 +224,18 @@ class EnvironmentGenerator:
 class UAVEnv(gym.Env):
     metadata = {'render_modes': ['human'], 'render_fps': 30}
 
-    def __init__(self, render_mode=None, curriculum_learning=False):
+    def __init__(self, render_mode=None, curriculum_learning=False, ns_cfg=None):
         super().__init__()
         self.render_mode = render_mode
         self.curriculum_learning = curriculum_learning
+        # Neurosymbolic configuration (optional, with safe defaults)
+        self.ns_cfg = ns_cfg if ns_cfg is not None else {
+            'use_neurosymbolic': False,
+            'lambda': 0.0,
+            'warmup_steps': 20,
+            'high_speed': 0.9,
+            'blocked_strength': 0.1
+        }
         
         # Initialize curriculum learning system
         if self.curriculum_learning:
@@ -274,6 +282,9 @@ class UAVEnv(gym.Env):
         self.goal_stabilization_steps = 0
         self.goal_hold_duration = 50  # Steps to hold at goal before episode ends (more steps for better stabilization)
 
+        # Episode-local timestep counter (for neurosymbolic warmup logic)
+        self._episode_timestep = 0
+
     def _get_velocity_limits(self):
         """Get adaptive velocity limits based on training progress (velocity curriculum)"""
         episode = self.current_episode
@@ -300,6 +311,8 @@ class UAVEnv(gym.Env):
             return 0.3, 2.0    # Min: 0.3 m/s, Max: 2.0 m/s (FULL SPEED)
     
     def step(self, action):
+        # Track per-episode timestep
+        self._episode_timestep += 1
         # Store previous velocity for trajectory change calculation
         self.prev_velocity = self.data.qvel[:3].copy()
         
@@ -433,6 +446,7 @@ class UAVEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.step_count = 0
+        self._episode_timestep = 0
         
         # Set dynamic goal position (randomly select from three available corners)
         CONFIG['goal_pos'] = self._get_random_goal_position()
@@ -484,6 +498,61 @@ class UAVEnv(gym.Env):
         self.prev_goal_dist = np.linalg.norm(CONFIG['goal_pos'] - self.data.qpos[:3])
         
         return self._get_obs(), {}
+
+    # =====================
+    # Neurosymbolic helpers
+    # =====================
+    def get_goal_vector(self):
+        """Return unit vector from UAV to goal (2D XY) and distance."""
+        pos = self.data.qpos[:3]
+        vec = CONFIG['goal_pos'] - pos
+        dist = float(np.linalg.norm(vec[:2]) + 1e-8)
+        dir_xy = vec[:2] / dist
+        return dir_xy, dist
+
+    def has_line_of_sight_to_goal(self):
+        """Approximate LOS by raycasting from UAV to goal against obstacles in XY plane."""
+        pos = self.data.qpos[:3]
+        goal_vec = CONFIG['goal_pos'] - pos
+        goal_dist = float(np.linalg.norm(goal_vec[:2]))
+        if goal_dist <= 1e-6:
+            return True
+        ray_dir = np.array([goal_vec[0], goal_vec[1], 0.0]) / (goal_dist + 1e-8)
+        min_obs_dist = CONFIG['lidar_range']
+        for obs in self.obstacles:
+            obs_dist = self._ray_obstacle_intersection(pos, ray_dir, obs)
+            if obs_dist < min_obs_dist:
+                min_obs_dist = obs_dist
+        # LOS if closest obstacle along ray is farther than goal distance
+        return min_obs_dist >= goal_dist - 1e-6
+
+    def symbolic_action(self, t_step=None):
+        """Compute a simple goal-directed action in env action space (vx, vy, vz=0)."""
+        # Read cfg with fallbacks
+        warmup_steps = int(self.ns_cfg.get('warmup_steps', 20))
+        high_speed = float(self.ns_cfg.get('high_speed', 0.9))
+        blocked_strength = float(self.ns_cfg.get('blocked_strength', 0.1))
+
+        if t_step is None:
+            t_step = self._episode_timestep
+
+        dir_xy, _ = self.get_goal_vector()
+
+        if t_step < warmup_steps:
+            speed = min(0.3, high_speed)  # moderate speed at start
+        elif self.has_line_of_sight_to_goal():
+            speed = min(high_speed, 1.0)  # cap to action_space.high
+        else:
+            speed = max(0.0, min(blocked_strength, 1.0))  # gentle nudge when blocked
+
+        vx = float(speed * dir_xy[0])
+        vy = float(speed * dir_xy[1])
+        vz = 0.0
+        a = np.array([vx, vy, vz], dtype=np.float32)
+        # Clip to action bounds
+        low = np.broadcast_to(self.action_space.low, a.shape)
+        high = np.broadcast_to(self.action_space.high, a.shape)
+        return np.clip(a, low, high)
 
     def render(self):
         if self.render_mode == "human":
