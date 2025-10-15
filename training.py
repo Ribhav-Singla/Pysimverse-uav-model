@@ -286,15 +286,11 @@ def main():
             # Running policy_old:
             action, log_prob = ppo_agent.select_action(state)
 
-            # Neurosymbolic blending (action = lambda*sym + (1-lambda)*rl)
-            if use_neurosymbolic and ns_lambda is not None:
-                sym_action = env.symbolic_action()
-                # Ensure numpy arrays
-                rl_action_np = np.array(action, dtype=np.float32)
-                blended = ns_lambda * sym_action + (1.0 - ns_lambda) * rl_action_np
-                # Clip to action bounds
-                blended = np.clip(blended, env.action_space.low, env.action_space.high)
-                action = blended
+            # Binary neurosymbolic gating: lambda in {0,1}
+            # - If ns_lambda == 1: use only symbolic action
+            # - If ns_lambda == 0: use only RL action
+            if use_neurosymbolic and ns_lambda is not None and ns_lambda >= 1.0:
+                action = env.symbolic_action()
             
             # Save state, action, and log probability
             memory.states.append(state)
