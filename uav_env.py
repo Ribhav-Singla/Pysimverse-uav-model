@@ -562,7 +562,7 @@ class UAVEnv(gym.Env):
     def symbolic_action(self, t_step=None):
         """Compute a simple goal-directed action in env action space (vx, vy, vz=0)."""
         # Read cfg with fallbacks
-        warmup_steps = int(self.ns_cfg.get('warmup_steps', 200))
+        warmup_steps = int(self.ns_cfg.get('warmup_steps', 0))
         high_speed = float(self.ns_cfg.get('high_speed', 0.9))
         blocked_strength = float(self.ns_cfg.get('blocked_strength', 0.1))
 
@@ -583,9 +583,7 @@ class UAVEnv(gym.Env):
         min_scale = float(self.ns_cfg.get('distance_min_scale', 0.4))
         dist_scale = max(min_scale, min(1.0, goal_dist_xy / max(far_dist, 1e-6)))
 
-        if t_step < warmup_steps:
-            speed = dist_scale * 0.6 * max_action_speed
-        elif self.has_line_of_sight_to_goal():
+        if self.has_line_of_sight_to_goal():
             speed = dist_scale * min(high_speed, max_action_speed)
         else:
             speed = dist_scale * max(0.0, min(blocked_strength * max_action_speed, max_action_speed))

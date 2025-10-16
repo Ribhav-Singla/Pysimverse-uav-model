@@ -307,15 +307,14 @@ def main():
             # Decide final action with binary neurosymbolic gating per-episode
             final_action = ppo_action_np
             if use_neurosymbolic:
-                warmup_steps = int(getattr(env, 'ns_cfg', {}).get('warmup_steps', 20))
-                use_symbolic_now = (env._episode_timestep < warmup_steps) or env.has_line_of_sight_to_goal()
+                use_symbolic_now = env.has_line_of_sight_to_goal()
                 if use_symbolic_now:
                     sym = np.array(env.symbolic_action(), dtype=np.float32)
                     if sym.ndim == 1:
                         sym = np.expand_dims(sym, axis=0)
                     final_action = sym
                     if (t % 100) == 0:
-                        print(f"[NS] Episode {i_episode} Step {t}: Using symbolic action (warmup={env._episode_timestep < warmup_steps}, LOS={use_symbolic_now and env.has_line_of_sight_to_goal()})")
+                        print(f"[NS] Episode {i_episode} Step {t}: Using symbolic action (LOS={use_symbolic_now})")
 
             # Compute log_prob of the executed action under old policy (for PPO update)
             try:
