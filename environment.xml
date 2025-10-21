@@ -20,15 +20,15 @@
     <light name="light1" pos="0 0 4" dir="0 0 -1" diffuse="1 1 1"/>
     
     <!-- Start position marker (green) -->
-    <geom name="start_marker" type="cylinder" size="0.15 0.05" pos="-3.0 -3.0 0.05" rgba="0 1 0 0.8"/>
-    <geom name="start_pole" type="box" size="0.03 0.03 0.4" pos="-3.0 -3.0 0.4" rgba="0 1 0 1"/>
+    <geom name="start_marker" type="cylinder" size="0.15 0.05" pos="3.0 -3.0 0.05" rgba="0 1 0 0.8"/>
+    <geom name="start_pole" type="box" size="0.03 0.03 0.4" pos="3.0 -3.0 0.4" rgba="0 1 0 1"/>
     
     <!-- Goal position marker (blue) -->
-    <geom name="goal_marker" type="cylinder" size="0.15 0.05" pos="-0.5221619490587326 0.03733080986907478 0.05" rgba="0 0 1 0.8"/>
-    <geom name="goal_pole" type="box" size="0.03 0.03 0.4" pos="-0.5221619490587326 0.03733080986907478 0.4" rgba="0 0 1 1"/>
+    <geom name="goal_marker" type="cylinder" size="0.15 0.05" pos="-2.6543332502021917 -0.3017471506304301 0.05" rgba="0 0 1 0.8"/>
+    <geom name="goal_pole" type="box" size="0.03 0.03 0.4" pos="-2.6543332502021917 -0.3017471506304301 0.4" rgba="0 0 1 1"/>
     
     <!-- UAV starting position -->
-    <body name="chassis" pos="-3.0 -3.0 1.0">
+    <body name="chassis" pos="3.0 -3.0 1.0">
       <joint type="free" name="root"/>
       <geom name="uav_body" type="box" size="0.12 0.12 0.03" rgba="1.0 0.0 0.0 1.0" mass="0.8"/>
       
@@ -54,15 +54,16 @@
       <site name="motor3" pos="0.06 -0.06 0" size="0.01"/>
       <site name="motor4" pos="-0.06 -0.06 0" size="0.01"/>
     </body>
-    <geom name="static_obs_0" type="cylinder" size="0.08534629145333067 1.0" pos="3.0 1.0 1.0" rgba="0.18947725387892725 0.1195295076471024 0.7557165836095775 1.0"/>
-    <geom name="static_obs_1" type="box" size="0.10793374566486558 0.0616160236421873 1.0" pos="-1.0 1.0 1.0" rgba="0.6205983838931802 0.45007060037622637 0.16228378335083082 1.0"/>
-    <geom name="static_obs_2" type="cylinder" size="0.11140761752949148 1.0" pos="-1.0 -1.0 1.0" rgba="0.2513335307360116 0.5713755475781829 0.5467351292343481 1.0"/>
-    <geom name="static_obs_3" type="box" size="0.10429118832626763 0.10639426191871672 1.0" pos="1.0 1.0 1.0" rgba="0.379044099148217 0.7024738051753596 0.6737922338610887 1.0"/>
-    <geom name="static_obs_4" type="cylinder" size="0.050016019595899665 1.0" pos="1.0 -3.0 1.0" rgba="0.22057222385700498 0.45930646214445037 0.5080837486773558 1.0"/>
-    <geom name="static_obs_5" type="cylinder" size="0.07228144876671447 1.0" pos="-1.0 -3.0 1.0" rgba="0.5995338386223777 0.24907181440740658 0.2882161095615071 1.0"/>
-    <geom name="static_obs_6" type="cylinder" size="0.05332399111880928 1.0" pos="-3.0 -1.0 1.0" rgba="0.6101615829311384 0.2209542209424692 0.25103128302334865 1.0"/>
-    <geom name="static_obs_7" type="box" size="0.0822422609706307 0.08551528137997588 1.0" pos="1.0 -1.0 1.0" rgba="0.595325731061625 0.6324419125285988 0.7751462226209135 1.0"/>
-    <geom name="static_obs_8" type="box" size="0.08987588556513552 0.054049445213588 1.0" pos="3.0 -3.0 1.0" rgba="0.610028640326439 0.529429147005767 0.5473754090132854 1.0"/>
+    <geom name="static_obs_0" type="box" size="0.08925787638549791 0.11340271909985138 1.0" pos="3.0 -1.0 1.0" rgba="0.6320390775742701 0.7712785283790561 0.8715179564119196 1.0"/>
+    <geom name="static_obs_1" type="cylinder" size="0.09990664108679055 1.0" pos="1.0 3.0 1.0" rgba="0.5341878318588534 0.47115077965723084 0.41658419452550377 1.0"/>
+    <geom name="static_obs_2" type="cylinder" size="0.05298019425677855 1.0" pos="-1.0 -3.0 1.0" rgba="0.5539053730446578 0.2989104036066985 0.790027049340174 1.0"/>
+    <geom name="static_obs_3" type="cylinder" size="0.0518209194247432 1.0" pos="1.0 -1.0 1.0" rgba="0.15575608374348937 0.10482321661573897 0.7712662709818366 1.0"/>
+    <geom name="static_obs_4" type="cylinder" size="0.055381205654601286 1.0" pos="-1.0 -1.0 1.0" rgba="0.7815953646020942 0.33899215960333384 0.27796742770081295 1.0"/>
+    <geom name="static_obs_5" type="cylinder" size="0.05668185383216422 1.0" pos="-3.0 1.0 1.0" rgba="0.8703667319404048 0.4550956448256339 0.23695515683505422 1.0"/>
+    <geom name="static_obs_6" type="box" size="0.09911375221321161 0.05264120647593567 1.0" pos="1.0 1.0 1.0" rgba="0.6355700091685447 0.322790069126602 0.5109517922778881 1.0"/>
+    <geom name="static_obs_7" type="cylinder" size="0.07535907787879112 1.0" pos="3.0 1.0 1.0" rgba="0.4031468056074531 0.1143231586083596 0.1810585175748341 1.0"/>
+    <geom name="static_obs_8" type="cylinder" size="0.08475608660358812 1.0" pos="-3.0 -3.0 1.0" rgba="0.602351455006381 0.4664761509753529 0.1674755359148275 1.0"/>
+    <geom name="static_obs_9" type="box" size="0.05046184896303758 0.08866208484038604 1.0" pos="-3.0 3.0 1.0" rgba="0.3805027676768352 0.386716560499757 0.20862679528625155 1.0"/>
     <geom name="trail_0" type="sphere" size="0.02" pos="0 0 -10" rgba="0 1 0 0.6" contype="0" conaffinity="0"/>
     <geom name="trail_1" type="sphere" size="0.02" pos="0 0 -10" rgba="0 1 0 0.6" contype="0" conaffinity="0"/>
     <geom name="trail_2" type="sphere" size="0.02" pos="0 0 -10" rgba="0 1 0 0.6" contype="0" conaffinity="0"/>

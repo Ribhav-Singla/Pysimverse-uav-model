@@ -24,7 +24,7 @@ CONFIG = {
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,
-    'static_obstacles': 9,
+    'static_obstacles': 10,
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
