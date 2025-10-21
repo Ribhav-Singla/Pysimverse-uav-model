@@ -73,7 +73,6 @@ class RDRRuleSystem:
     def __init__(self):
         self.default_rule = None
         self.all_rules: Dict[str, RDRRule] = {}
-        self.rule_counter = 0
         self.initialize_default_rules()
         
     def initialize_default_rules(self):
@@ -232,30 +231,7 @@ class RDRRuleSystem:
         # This shouldn't happen if default rule is properly set up
         return self.default_rule
     
-    def add_new_rule(self, parent_rule_id: str, condition: Callable, 
-                     conclusion: str, action_params: Dict[str, float]) -> str:
-        """Add a new exception rule to an existing rule"""
-        self.rule_counter += 1
-        new_rule_id = f"R{self.rule_counter}_LEARNED"
-        
-        parent_rule = self.all_rules.get(parent_rule_id)
-        if parent_rule is None:
-            print(f"Warning: Parent rule {parent_rule_id} not found")
-            return None
-        
-        new_rule = RDRRule(
-            rule_id=new_rule_id,
-            condition=condition,
-            conclusion=conclusion,
-            action_params=action_params,
-            parent=parent_rule
-        )
-        
-        parent_rule.add_exception(new_rule)
-        self.all_rules[new_rule_id] = new_rule
-        
-        print(f"📚 Added new RDR rule: {new_rule_id} -> {conclusion}")
-        return new_rule_id
+
     
     def get_rule_statistics(self) -> Dict[str, Dict[str, float]]:
         """Get performance statistics for all rules"""
@@ -754,7 +730,10 @@ class UAVEnv(gym.Env):
         applicable_rule.usage_count += 1
         
         if self.ns_cfg.get('debug_rdr', False):
-            print(f"🔍 RDR: Applied rule {applicable_rule.rule_id} - {applicable_rule.conclusion}")
+            vel_info = context['velocity'][:2]
+            vel_mag = np.linalg.norm(vel_info)
+            vel_align = np.dot(vel_info / (vel_mag + 1e-8), context['goal_vector'][:2] / (np.linalg.norm(context['goal_vector'][:2]) + 1e-8)) if vel_mag > 0.01 else 0.0
+            print(f"🔍 RDR: Rule {applicable_rule.rule_id} | Vel_align: {vel_align:.2f} | Action: [{action[0]:.2f}, {action[1]:.2f}]")
         
         return action
     
@@ -808,79 +787,123 @@ class UAVEnv(gym.Env):
         }
     
     def _generate_action_from_rule(self, rule: RDRRule, context: Dict[str, Any]) -> np.ndarray:
-        """Generate action based on RDR rule parameters"""
+        """Generate action based on RDR rule parameters with velocity modification approach"""
         
         # Get rule parameters
-        speed_multiplier = rule.action_params.get('speed_multiplier', 0.1)
         direction_type = rule.action_params.get('direction', 'goal')
         
-        # No velocity constraints - use full action space range
-        action_cap = float(np.max(self.action_space.high))  # Should be 1.0
+        # Get current velocity and goal direction
+        current_vel = context['velocity'][:2]  # X,Y velocity
+        goal_vector = context['goal_vector'][:2]
+        goal_direction = goal_vector / (np.linalg.norm(goal_vector) + 1e-8)
         
-        # Distance-aware speed scaling
-        goal_distance = context['goal_distance']
-        far_dist = 3.0
-        min_scale = 0.4
-        dist_scale = max(min_scale, min(1.0, goal_distance / max(far_dist, 1e-6)))
+        # Start with current velocity as base
+        modified_vel = current_vel.copy()
+        vel_magnitude = np.linalg.norm(current_vel)
         
-        # Calculate base speed using full action range
-        base_speed = dist_scale * speed_multiplier * action_cap
+        # Velocity modification based on rule type and current speed
+        if rule.rule_id == "R1_CLEAR_PATH":
+            # Clear path: Increase velocity if moving slowly
+            if 0 < vel_magnitude < 0.9:
+                # Add 0.1 to velocity magnitude towards goal
+                if vel_magnitude > 0.01:
+                    vel_dir = current_vel / vel_magnitude
+                    modified_vel = vel_dir * min(0.9, vel_magnitude + 0.1)
+                else:
+                    # If stationary, start moving towards goal
+                    modified_vel = goal_direction * 0.1
         
-        # Generate direction vector based on rule direction type
-        if direction_type == 'goal':
-            # Direct toward goal
-            dir_xy = context['goal_vector'][:2]
-            dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
+        elif rule.rule_id in ["R1_1_CLEAR_BUT_NEAR", "R2_BLOCKED_PATH", "R1_2_CLEAR_BUT_BOUNDARY"]:
+            # Near obstacles or blocked: Reduce velocity if moving fast
+            if 0 < vel_magnitude < 0.9:
+                # Subtract 0.1 from velocity magnitude
+                if vel_magnitude > 0.1:
+                    vel_dir = current_vel / vel_magnitude
+                    modified_vel = vel_dir * max(0.1, vel_magnitude - 0.1)
+                else:
+                    # If moving very slowly, maintain minimum movement towards goal
+                    modified_vel = goal_direction * 0.05
+        
+        elif rule.rule_id in ["R2_1_BLOCKED_CORNER", "R2_2_BLOCKED_GOAL_CLOSE"]:
+            # Cornered or goal close: Very conservative velocity reduction
+            if 0 < vel_magnitude < 0.9:
+                if vel_magnitude > 0.05:
+                    vel_dir = current_vel / vel_magnitude
+                    modified_vel = vel_dir * max(0.05, vel_magnitude - 0.15)
+                else:
+                    # If moving very slowly, maintain very slow movement
+                    modified_vel = goal_direction * 0.03
+        
+        elif rule.rule_id == "R3_EMERGENCY":
+            # Emergency: Immediate velocity reduction with escape direction
+            lidar_readings = context['lidar_readings']
+            closest_idx = np.argmin(lidar_readings)
+            escape_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays'] + np.pi
+            escape_dir = np.array([np.cos(escape_angle), np.sin(escape_angle)])
             
-        elif direction_type == 'goal_adjusted':
-            # Toward goal but adjusted for boundary avoidance
-            dir_xy = context['goal_vector'][:2]
-            dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
-            
+            if 0 < vel_magnitude < 0.9:
+                if vel_magnitude > 0.1:
+                    # Moving fast - reduce speed dramatically but keep some movement
+                    modified_vel = escape_dir * max(0.05, vel_magnitude - 0.3)
+                else:
+                    # Moving slow - gentle escape movement
+                    modified_vel = escape_dir * max(0.03, vel_magnitude - 0.05)
+            else:
+                # Stationary - start escape movement
+                modified_vel = escape_dir * 0.05
+        
+        else:  # Default rule
+            # Default: Maintain current velocity or move slowly towards goal
+            if vel_magnitude < 0.01:
+                modified_vel = goal_direction * 0.05
+            else:
+                modified_vel = current_vel.copy()
+        
+        # Apply directional adjustment based on rule direction type
+        if direction_type == 'goal_adjusted':
             # Adjust direction away from boundaries
             pos = context['position']
             half_world = CONFIG['world_size'] / 2
             
-            # Add repulsion from close boundaries
+            # Create adjustment vector for boundary avoidance
+            adjustment = np.zeros(2)
             if abs(pos[0] + half_world) < 1.0:  # Near west boundary
-                dir_xy[0] += 0.5  # Push east
+                adjustment[0] += 0.3  # Push east
             if abs(pos[0] - half_world) < 1.0:  # Near east boundary
-                dir_xy[0] -= 0.5  # Push west
+                adjustment[0] -= 0.3  # Push west
             if abs(pos[1] + half_world) < 1.0:  # Near south boundary
-                dir_xy[1] += 0.5  # Push north
+                adjustment[1] += 0.3  # Push north
             if abs(pos[1] - half_world) < 1.0:  # Near north boundary
-                dir_xy[1] -= 0.5  # Push south
+                adjustment[1] -= 0.3  # Push south
             
-            dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
+            # Apply boundary adjustment to modified velocity
+            modified_vel += adjustment
             
         elif direction_type == 'explore':
-            # Explore around obstacles - find clearest direction
+            # Explore around obstacles - adjust toward clearest direction
             clearances = context['directional_clearances']
             best_direction = max(clearances, key=clearances.get)
             
             direction_angles = {'front': 0, 'right': np.pi/2, 'back': np.pi, 'left': 3*np.pi/2}
             angle = direction_angles[best_direction]
-            dir_xy = np.array([np.cos(angle), np.sin(angle)])
+            explore_dir = np.array([np.cos(angle), np.sin(angle)])
+            
+            # Blend current velocity with exploration direction
+            modified_vel = 0.7 * modified_vel + 0.3 * explore_dir * 0.2
             
         elif direction_type == 'backup_explore':
             # Backup first, then explore
-            # Move opposite to current goal direction briefly, then explore
             if context['episode_step'] % 20 < 5:  # Backup phase
-                dir_xy = -context['goal_vector'][:2]
-                dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
+                # Move opposite to goal direction
+                modified_vel = -goal_direction * 0.1
             else:  # Explore phase
                 clearances = context['directional_clearances']
                 best_direction = max(clearances, key=clearances.get)
                 direction_angles = {'front': 0, 'right': np.pi/2, 'back': np.pi, 'left': 3*np.pi/2}
                 angle = direction_angles[best_direction]
-                dir_xy = np.array([np.cos(angle), np.sin(angle)])
+                explore_dir = np.array([np.cos(angle), np.sin(angle)])
+                modified_vel = explore_dir * 0.15
                 
-        elif direction_type == 'careful_goal':
-            # Very careful movement toward goal
-            dir_xy = context['goal_vector'][:2]
-            dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
-            base_speed *= 0.5  # Extra speed reduction
-            
         elif direction_type == 'avoid':
             # Emergency avoidance - move away from closest obstacle
             lidar_readings = context['lidar_readings']
@@ -888,18 +911,12 @@ class UAVEnv(gym.Env):
             closest_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays']
             # Move in opposite direction
             avoid_angle = closest_angle + np.pi
-            dir_xy = np.array([np.cos(avoid_angle), np.sin(avoid_angle)])
-            
-        else:
-            # Default: move toward goal
-            dir_xy = context['goal_vector'][:2]
-            dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
+            avoid_dir = np.array([np.cos(avoid_angle), np.sin(avoid_angle)])
+            modified_vel = avoid_dir * 0.1  # Emergency avoidance speed
         
-        # Allow full signed action space [-1, 1] - no restrictions on negative components
-        
-        # Construct action
-        vx = float(base_speed * dir_xy[0])
-        vy = float(base_speed * dir_xy[1])
+        # Construct action using modified velocity
+        vx = float(modified_vel[0])
+        vy = float(modified_vel[1])
         vz = 0.0
         
         action = np.array([vx, vy, vz], dtype=np.float32)
