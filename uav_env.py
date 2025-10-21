@@ -20,7 +20,7 @@ CONFIG = {
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
     'control_dt': 0.05,
-    'max_steps': 50000,  # Max steps per episode
+    'max_steps': 5000,  # Max steps per episode
     'boundary_penalty': -100,  # Penalty for going out of bounds
     'lidar_range': 2.9,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
@@ -262,7 +262,7 @@ class UAVEnv(gym.Env):
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         
         # Action space: 3D velocity control (vx, vy, vz=0) - no Z-axis movement
-        self.action_space = spaces.Box(low=0, high=1.0, shape=(3,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=np.float32)
         
         self.viewer = None
         self.step_count = 0

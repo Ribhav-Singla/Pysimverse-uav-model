@@ -39,7 +39,7 @@ def main():
     total_episodes = episodes_per_level_count * total_levels  # 300 * 10 = 3000 episodes
     
     max_episodes = total_episodes
-    max_timesteps = 50000        # max timesteps in one episode
+    max_timesteps = 5000        # max timesteps in one episode
 
     update_timestep = 1024      # OPTIMIZED: update policy every 1024 timesteps (was 2048)
     action_std = 1.0            # OPTIMIZED: Start with 100% exploration (was 0.3)
