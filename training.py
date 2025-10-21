@@ -31,7 +31,7 @@ def main():
     
     # Curriculum Learning Parameters
     curriculum_learning = True
-    episodes_per_level_count = 100  # Episodes per curriculum level (equal for all levels)
+    episodes_per_level_count = 25  # Episodes per curriculum level (equal for all levels)
     total_levels = 10           # Obstacle levels 1-10
     
     # Set equal episodes for each level
@@ -131,6 +131,7 @@ def main():
         plt.xlabel('Episode')
         plt.ylabel('Reward')
         plt.title('Episode Reward')
+        plt.ylim(-2000, 2000)
         plt.legend(loc='best')
         plt.grid(True, alpha=0.3)
 
@@ -266,7 +267,10 @@ def main():
         
         # Update per-episode lambda and neurosymbolic active flag
         # λ alternates per episode: 1 for odd episodes, 0 for even episodes
-        ns_lambda = 1.0 if (i_episode % 2 == 1) else 0.0
+        # ns_lambda = 1.0 if (i_episode % 2 == 1) else 0.0
+        ns_lambda=1
+
+
         use_neurosymbolic = (ns_lambda >= 1.0)
 
         state, _ = env.reset()
@@ -291,9 +295,8 @@ def main():
             collision_thresh = env._get_collision_threshold()
             print(f"📊 Current Collision Threshold: {collision_thresh:.3f}m")
             
-            # ADDED: Log velocity limits
-            min_vel, max_vel = env._get_velocity_limits()
-            print(f"📊 Current Velocity Limits: {min_vel:.2f} - {max_vel:.2f} m/s")
+            # Velocity constraints removed - full [-1, 1] range available
+            print(f"� Velocity Range: [-1.0, 1.0] (no constraints)")
             
         for t in range(max_timesteps):
             time_step +=1
@@ -304,17 +307,33 @@ def main():
             if ppo_action_np.ndim == 1:
                 ppo_action_np = np.expand_dims(ppo_action_np, axis=0)
 
-            # Decide final action with binary neurosymbolic gating per-episode
+            # Binary lambda logic: lambda=1 -> RDR (if specific rule), lambda=0 -> RL
             final_action = ppo_action_np
-            if use_neurosymbolic:
-                use_symbolic_now = env.has_line_of_sight_to_goal()
-                if use_symbolic_now:
+            action_source = "PPO"
+            
+            if use_neurosymbolic and ns_lambda >= 1.0:
+                # Check if RDR system has a specific (non-default) rule available
+                if env.has_specific_rdr_rule():
+                    # Specific rule available - get and use RDR action
                     sym = np.array(env.symbolic_action(), dtype=np.float32)
                     if sym.ndim == 1:
                         sym = np.expand_dims(sym, axis=0)
                     final_action = sym
+                    action_source = "RDR"
+                    
                     if (t % 100) == 0:
-                        print(f"[NS] Episode {i_episode} Step {t}: Using symbolic action (LOS={use_symbolic_now})")
+                        rule_id = env.current_rule.rule_id if env.current_rule else "Unknown"
+                        print(f"[RDR] Episode {i_episode} Step {t}: Using RDR rule {rule_id}")
+                else:
+                    # No specific rule available - fall back to RL agent
+                    action_source = "PPO_FALLBACK"
+                    if (t % 100) == 0:
+                        print(f"[FALLBACK] Episode {i_episode} Step {t}: No specific RDR rule available, using PPO")
+            elif ns_lambda <= 0.0:
+                # Pure RL control - use PPO action (already set)
+                if (t % 100) == 0:
+                    print(f"[PPO] Episode {i_episode} Step {t}: Using PPO action (lambda=0)")
+            # Note: No blending case since lambda is binary (0 or 1)
 
             # Compute log_prob of the executed action under old policy (for PPO update)
             try:
@@ -465,12 +484,11 @@ def main():
             current_action_std = ppo_agent.policy.action_var[0].sqrt().item()
             current_lrs = ppo_agent.get_current_lr()
             collision_thresh = env._get_collision_threshold()
-            min_vel, max_vel = env._get_velocity_limits()
             
             print(f"🎲 Current Action Std: {current_action_std:.4f} ({current_action_std*100:.1f}% exploration)")
             print(f"📚 Learning Rates - Actor: {current_lrs['actor_lr']:.6f}, Critic: {current_lrs['critic_lr']:.6f}")
             print(f"🛡️  Collision Threshold: {collision_thresh:.3f}m")
-            print(f"🚀 Velocity Limits: {min_vel:.2f} - {max_vel:.2f} m/s")
+            print(f"🚀 Velocity Range: [-1.0, 1.0] (no constraints)")
             print(f"💰 Latest Episode Reward: {episode_reward:.1f}")
             print(f"⏱️  Latest Episode Length: {episode_length} steps")
             

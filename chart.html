@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fracture Incidence Chart</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      background-color: #1a1a1a;
+      color: #ddd;
+      font-family: "Inter", "Segoe UI", Roboto, sans-serif;
+      text-align: center;
+      margin-top: 40px;
+    }
+    canvas {
+      background-color: #222;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 0 12px rgba(0,0,0,0.4);
+    }
+  </style>
+</head>
+<body>
+  <h2>Cumulative Fracture Incidence: FIT vs. FLEX</h2>
+  <div style="width: 70%; margin: auto;">
+    <canvas id="fractureChart"></canvas>
+  </div>
+
+  <script>
+    const ctx = document.getElementById('fractureChart').getContext('2d');
+
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: ["Clinical Vertebral", "Nonvertebral", "Hip"],
+        datasets: [
+          {
+            label: "FIT: Alendronate (3 yrs)",
+            data: [2.0, 8.5, 1.2],
+            backgroundColor: "#6fb1a0",
+            borderColor: "#6fb1a0",
+            borderWidth: 1,
+            borderRadius: 8
+          },
+          {
+            label: "FIT: Placebo (3 yrs)",
+            data: [3.8, 10.7, 1.5],
+            backgroundColor: "#b6a15c",
+            borderColor: "#b6a15c",
+            borderWidth: 1,
+            borderRadius: 8
+          },
+          {
+            label: "FLEX: Continuation (5 yrs)",
+            data: [2.4, 18.9, 3.0],
+            backgroundColor: "#8a7db1",
+            borderColor: "#8a7db1",
+            borderWidth: 1,
+            borderRadius: 8
+          },
+          {
+            label: "FLEX: Discontinuation (5 yrs)",
+            data: [5.3, 18.9, 3.0],
+            backgroundColor: "#b27c7c",
+            borderColor: "#b27c7c",
+            borderWidth: 1,
+            borderRadius: 8
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            position: "top",
+            labels: {
+              color: "#ddd",
+              font: { size: 13 }
+            }
+          },
+          title: {
+            display: false
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            max: 20,
+            ticks: {
+              color: "#bbb",
+              font: { size: 13 }
+            },
+            title: {
+              display: true,
+              text: "Incidence (%)",
+              color: "#ccc",
+              font: { size: 14, weight: "bold" }
+            },
+            grid: {
+              color: "rgba(255,255,255,0.1)"
+            }
+          },
+          x: {
+            ticks: {
+              color: "#bbb",
+              font: { size: 13 }
+            },
+            title: {
+              display: true,
+              text: "Fracture Type",
+              color: "#ccc",
+              font: { size: 14, weight: "bold" }
+            },
+            grid: {
+              color: "rgba(255,255,255,0.1)"
+            }
+          }
+        }
+      }
+    });
+  </script>
+</body>
+</html>

@@ -7,6 +7,7 @@ import random
 import csv
 import os
 from datetime import datetime
+from typing import Dict, List, Any, Optional, Callable
 
 # Configuration from uav_render.py, adapted for the environment
 CONFIG = {
@@ -20,12 +21,265 @@ CONFIG = {
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
     'control_dt': 0.05,
-    'max_steps': 50000,  # Max steps per episode
+    'max_steps': 10000,  # Max steps per episode
     'boundary_penalty': -100,  # Penalty for going out of bounds
     'lidar_range': 2.9,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
     'step_reward': -0.01,    # Survival bonus per timestep
 }
+
+class RDRRule:
+    """A single rule node in the RDR (Ripple Down Rules) system"""
+    
+    def __init__(self, rule_id: str, condition: Callable, conclusion: str, 
+                 action_params: Dict[str, float], parent: Optional['RDRRule'] = None):
+        self.rule_id = rule_id
+        self.condition = condition  # Function that evaluates to True/False
+        self.conclusion = conclusion  # Human-readable rule conclusion
+        self.action_params = action_params  # Parameters for action generation
+        self.parent = parent
+        self.exceptions: List['RDRRule'] = []  # Child rules (exceptions)
+        self.usage_count = 0
+        self.success_count = 0
+        
+    def add_exception(self, exception_rule: 'RDRRule'):
+        """Add an exception rule to this rule"""
+        exception_rule.parent = self
+        self.exceptions.append(exception_rule)
+        
+    def evaluate_condition(self, context: Dict[str, Any]) -> bool:
+        """Evaluate if this rule's condition is satisfied"""
+        try:
+            return self.condition(context)
+        except Exception as e:
+            print(f"Error evaluating rule {self.rule_id}: {e}")
+            return False
+    
+    def get_success_rate(self) -> float:
+        """Get the success rate of this rule"""
+        if self.usage_count == 0:
+            return 0.0
+        return self.success_count / self.usage_count
+    
+    def update_performance(self, success: bool):
+        """Update rule performance statistics"""
+        self.usage_count += 1
+        if success:
+            self.success_count += 1
+
+class RDRRuleSystem:
+    """Ripple Down Rules system for UAV navigation"""
+    
+    def __init__(self):
+        self.default_rule = None
+        self.all_rules: Dict[str, RDRRule] = {}
+        self.rule_counter = 0
+        self.initialize_default_rules()
+        
+    def initialize_default_rules(self):
+        """Initialize the default rule hierarchy for UAV navigation"""
+        
+        # Root rule: Default behavior
+        self.default_rule = RDRRule(
+            rule_id="R0_DEFAULT",
+            condition=lambda ctx: True,  # Always true (fallback)
+            conclusion="Default: Move slowly toward goal",
+            action_params={"speed_multiplier": 0.1, "direction": "goal"}
+        )
+        self.all_rules["R0_DEFAULT"] = self.default_rule
+        
+        # Rule 1: Clear path to goal
+        rule_clear_path = RDRRule(
+            rule_id="R1_CLEAR_PATH",
+            condition=self._condition_clear_path,
+            conclusion="Clear path: Move fast toward goal",
+            action_params={"speed_multiplier": 0.9, "direction": "goal"}
+        )
+        self.default_rule.add_exception(rule_clear_path)
+        self.all_rules["R1_CLEAR_PATH"] = rule_clear_path
+        
+        # Exception 1.1: Clear path but near obstacle
+        rule_clear_but_near = RDRRule(
+            rule_id="R1_1_CLEAR_BUT_NEAR",
+            condition=self._condition_clear_but_near_obstacle,
+            conclusion="Clear path but near obstacle: Move moderately toward goal",
+            action_params={"speed_multiplier": 0.5, "direction": "goal"}
+        )
+        rule_clear_path.add_exception(rule_clear_but_near)
+        self.all_rules["R1_1_CLEAR_BUT_NEAR"] = rule_clear_but_near
+        
+        # Exception 1.2: Clear path but near boundary
+        rule_clear_but_boundary = RDRRule(
+            rule_id="R1_2_CLEAR_BUT_BOUNDARY",
+            condition=self._condition_clear_but_near_boundary,
+            conclusion="Clear path but near boundary: Reduce speed and adjust direction",
+            action_params={"speed_multiplier": 0.3, "direction": "goal_adjusted"}
+        )
+        rule_clear_path.add_exception(rule_clear_but_boundary)
+        self.all_rules["R1_2_CLEAR_BUT_BOUNDARY"] = rule_clear_but_boundary
+        
+        # Rule 2: Blocked path - explore around obstacle
+        rule_blocked_path = RDRRule(
+            rule_id="R2_BLOCKED_PATH",
+            condition=self._condition_blocked_path,
+            conclusion="Blocked path: Explore around obstacle",
+            action_params={"speed_multiplier": 0.2, "direction": "explore"}
+        )
+        self.default_rule.add_exception(rule_blocked_path)
+        self.all_rules["R2_BLOCKED_PATH"] = rule_blocked_path
+        
+        # Exception 2.1: Blocked and in corner
+        rule_blocked_corner = RDRRule(
+            rule_id="R2_1_BLOCKED_CORNER",
+            condition=self._condition_blocked_and_cornered,
+            conclusion="Blocked and cornered: Backup and then explore",
+            action_params={"speed_multiplier": 0.15, "direction": "backup_explore"}
+        )
+        rule_blocked_path.add_exception(rule_blocked_corner)
+        self.all_rules["R2_1_BLOCKED_CORNER"] = rule_blocked_corner
+        
+        # Exception 2.2: Blocked but goal very close
+        rule_blocked_goal_close = RDRRule(
+            rule_id="R2_2_BLOCKED_GOAL_CLOSE",
+            condition=self._condition_blocked_but_goal_close,
+            conclusion="Blocked but goal close: Careful navigation",
+            action_params={"speed_multiplier": 0.1, "direction": "careful_goal"}
+        )
+        rule_blocked_path.add_exception(rule_blocked_goal_close)
+        self.all_rules["R2_2_BLOCKED_GOAL_CLOSE"] = rule_blocked_goal_close
+        
+        # Rule 3: Emergency situations
+        rule_emergency = RDRRule(
+            rule_id="R3_EMERGENCY",
+            condition=self._condition_emergency,
+            conclusion="Emergency: Immediate avoidance",
+            action_params={"speed_multiplier": 0.05, "direction": "avoid"}
+        )
+        self.default_rule.add_exception(rule_emergency)
+        self.all_rules["R3_EMERGENCY"] = rule_emergency
+        
+        print(f"🔧 RDR System Initialized with {len(self.all_rules)} rules")
+    
+    # =====================
+    # Condition Functions
+    # =====================
+    
+    def _condition_clear_path(self, ctx: Dict[str, Any]) -> bool:
+        """Check if there's a CONFIDENT clear path to goal - high confidence required"""
+        return (ctx.get('has_los_to_goal', False) and 
+                ctx.get('min_obstacle_dist', 0) > 1.2 and      # Far from obstacles (high confidence)
+                ctx.get('distance_to_boundary', 0) > 1.5 and   # Far from boundaries  
+                ctx.get('goal_distance', float('inf')) > 1.0)  # Not too close to goal (avoid jitter)
+    
+    def _condition_clear_but_near_obstacle(self, ctx: Dict[str, Any]) -> bool:
+        """Clear path but dangerously close to obstacles - specific danger zone"""
+        return (ctx.get('has_los_to_goal', False) and 
+                0.5 < ctx.get('min_obstacle_dist', float('inf')) < 1.2 and  # Specific danger range
+                ctx.get('distance_to_boundary', 0) > 1.0)  # Not near boundary (different rule)
+    
+    def _condition_clear_but_near_boundary(self, ctx: Dict[str, Any]) -> bool:
+        """Clear path but close to world boundary - boundary-specific issue"""
+        return (ctx.get('has_los_to_goal', False) and 
+                ctx.get('distance_to_boundary', float('inf')) < 1.0 and
+                ctx.get('min_obstacle_dist', 0) > 0.8)  # Not also near obstacles
+    
+    def _condition_blocked_path(self, ctx: Dict[str, Any]) -> bool:
+        """Path to goal is blocked - confident blocking with safe distance"""
+        return (not ctx.get('has_los_to_goal', False) and
+                ctx.get('min_obstacle_dist', 0) > 0.8 and      # Not in emergency zone
+                ctx.get('distance_to_boundary', 0) > 1.0 and   # Not near boundaries
+                ctx.get('num_blocked_directions', 0) < 3)      # Not cornered (different rule)
+    
+    def _condition_blocked_and_cornered(self, ctx: Dict[str, Any]) -> bool:
+        """Blocked path and UAV is in a corner/tight space - specific cornering situation"""
+        return (not ctx.get('has_los_to_goal', False) and
+                (ctx.get('num_blocked_directions', 0) >= 3 or   # Many blocked directions OR
+                 ctx.get('distance_to_boundary', float('inf')) < 0.8))  # Very close to boundary
+    
+    def _condition_blocked_but_goal_close(self, ctx: Dict[str, Any]) -> bool:
+        """Path blocked but goal is very close - precision navigation required"""
+        return (not ctx.get('has_los_to_goal', False) and
+                ctx.get('goal_distance', float('inf')) < 1.2 and  # Goal is close
+                ctx.get('min_obstacle_dist', 0) > 0.5)  # Not in emergency
+    
+    def _condition_emergency(self, ctx: Dict[str, Any]) -> bool:
+        """Emergency situation - immediate collision danger"""
+        return ctx.get('min_obstacle_dist', float('inf')) < 0.4  # Increased threshold for emergency
+    
+    def evaluate_rules(self, context: Dict[str, Any]) -> RDRRule:
+        """Evaluate the rule hierarchy and return the most specific applicable rule"""
+        return self._evaluate_rule_recursive(self.default_rule, context)
+    
+    def has_specific_rule(self, context: Dict[str, Any]) -> bool:
+        """Check if any specific (non-default) rule applies to the context"""
+        # Use the actual evaluation process and check if result is not default
+        applicable_rule = self.evaluate_rules(context)
+        return applicable_rule.rule_id != "R0_DEFAULT"
+    
+    def _evaluate_rule_recursive(self, rule: RDRRule, context: Dict[str, Any]) -> RDRRule:
+        """Recursively evaluate rules, checking exceptions first"""
+        
+        # Check all exceptions (more specific rules)
+        for exception in rule.exceptions:
+            if exception.evaluate_condition(context):
+                # Recursively check if this exception has more specific exceptions
+                return self._evaluate_rule_recursive(exception, context)
+        
+        # If no exceptions apply, return this rule (if its condition is met)
+        if rule.evaluate_condition(context):
+            return rule
+        
+        # This shouldn't happen if default rule is properly set up
+        return self.default_rule
+    
+    def add_new_rule(self, parent_rule_id: str, condition: Callable, 
+                     conclusion: str, action_params: Dict[str, float]) -> str:
+        """Add a new exception rule to an existing rule"""
+        self.rule_counter += 1
+        new_rule_id = f"R{self.rule_counter}_LEARNED"
+        
+        parent_rule = self.all_rules.get(parent_rule_id)
+        if parent_rule is None:
+            print(f"Warning: Parent rule {parent_rule_id} not found")
+            return None
+        
+        new_rule = RDRRule(
+            rule_id=new_rule_id,
+            condition=condition,
+            conclusion=conclusion,
+            action_params=action_params,
+            parent=parent_rule
+        )
+        
+        parent_rule.add_exception(new_rule)
+        self.all_rules[new_rule_id] = new_rule
+        
+        print(f"📚 Added new RDR rule: {new_rule_id} -> {conclusion}")
+        return new_rule_id
+    
+    def get_rule_statistics(self) -> Dict[str, Dict[str, float]]:
+        """Get performance statistics for all rules"""
+        stats = {}
+        for rule_id, rule in self.all_rules.items():
+            stats[rule_id] = {
+                'usage_count': rule.usage_count,
+                'success_count': rule.success_count,
+                'success_rate': rule.get_success_rate()
+            }
+        return stats
+    
+    def print_rule_hierarchy(self, rule: RDRRule = None, indent: int = 0):
+        """Print the rule hierarchy for debugging"""
+        if rule is None:
+            rule = self.default_rule
+            print("🌳 RDR Rule Hierarchy:")
+        
+        prefix = "  " * indent + ("├─ " if indent > 0 else "")
+        success_rate = f"({rule.get_success_rate():.2f})" if rule.usage_count > 0 else "(unused)"
+        print(f"{prefix}{rule.rule_id}: {rule.conclusion} {success_rate}")
+        
+        for exception in rule.exceptions:
+            self.print_rule_hierarchy(exception, indent + 1)
 
 class EnvironmentGenerator:
     @staticmethod
@@ -262,7 +516,7 @@ class UAVEnv(gym.Env):
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         
         # Action space: 3D velocity control (vx, vy, vz=0) - no Z-axis movement
-        self.action_space = spaces.Box(low=0, high=1.0, shape=(3,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1, high=1.0, shape=(3,), dtype=np.float32)
         
         self.viewer = None
         self.step_count = 0
@@ -277,29 +531,20 @@ class UAVEnv(gym.Env):
         # Episode counter for adaptive thresholds
         self.current_episode = 0
         
-        # Goal stabilization tracking
-        self.goal_reached = False
-        self.goal_stabilization_steps = 0
-        self.goal_hold_duration = 50  # Steps to hold at goal before episode ends (more steps for better stabilization)
+        # Goal stabilization removed - simple goal achievement
 
         # Episode-local timestep counter (for neurosymbolic warmup logic)
         self._episode_timestep = 0
         # Neurosymbolic LOS confirmation and cooldown tracking
         self._ns_los_confirm_count = 0
         self._ns_cooldown_steps_remaining = 0
-
-    def _get_velocity_limits(self):
-        """Get adaptive velocity limits based on training progress (velocity curriculum)"""
-        episode = self.current_episode
         
-        # EVEN MORE CONSERVATIVE velocity curriculum (very slow start)
-        # This helps agent learn proper direction before moving quickly
-        if episode < 100:
-            return 0.05, 0.2   # SUPER SLOW: Nearly stationary for initial learning
-        elif episode < 300:
-            return 0.05, 0.3      
-        else:
-            return 0, 1.0    
+        # Initialize RDR (Ripple Down Rules) system
+        self.rdr_system = RDRRuleSystem()
+        self.current_rule = None  # Track which rule was used last
+        self.rule_performance_tracking = {}  # Track rule success/failure
+
+    
     
     def step(self, action):
         # Track per-episode timestep
@@ -320,94 +565,16 @@ class UAVEnv(gym.Env):
             goal_vector = CONFIG['goal_pos'] - pos
             goal_direction = goal_vector / (np.linalg.norm(goal_vector) + 1e-8)  # Normalized goal direction
             bias_strength = max(0, (200 - self.current_episode) / 200)  # Fade out bias over first 200 episodes
-            if self.ns_cfg.get('use_neurosymbolic', False) and float(self.ns_cfg.get('lambda', 0.0)) >= 1.0:
-                # Project to non-negative action space [0,1] by zeroing negatives and renormalizing
-                goal_dir_pos = np.array([
-                    max(0.0, float(goal_direction[0])),
-                    max(0.0, float(goal_direction[1]))
-                ], dtype=np.float32)
-                norm_g = float(np.linalg.norm(goal_dir_pos) + 1e-8)
-                if norm_g > 0:
-                    goal_dir_pos /= norm_g
-                action[:2] = (1 - bias_strength * 0.5) * action[:2] + (bias_strength * 0.5) * goal_dir_pos
-            else:
-                # Baseline: allow signed directions as before
-                action[:2] = (1 - bias_strength * 0.5) * action[:2] + (bias_strength * 0.5) * goal_direction[:2]
+            # Allow full signed directions [-1, 1] in both neurosymbolic and baseline modes
+            action[:2] = (1 - bias_strength * 0.5) * action[:2] + (bias_strength * 0.5) * goal_direction[:2]
         
-        # VELOCITY CURRICULUM: Get current velocity limits
-        min_vel, max_vel = self._get_velocity_limits()
-        
-        # Apply velocity control with GRADUAL ACCELERATION
-        # Instead of directly setting velocity from action, we gradually adjust it
-        current_vel = self.data.qvel[:2].copy()
+        # Direct velocity control - no constraints, full [-1, 1] range
         target_vel = action[:2]  # Desired velocity from action
         
-        # ANTI-WESTWARD BIAS: Special case for western boundary problems
-        # If agent is trying to move west (negative X), reduce that component significantly
-        # This helps prevent the boundary issues we're seeing
-        if target_vel[0] < 0 and self.current_episode < 500:
-            target_vel[0] *= 0.5  # Reduce westward velocity by 50%
-        
-        # Limit target velocity magnitude
-        target_speed = np.linalg.norm(target_vel)
-        if target_speed > max_vel:
-            target_vel = (target_vel / target_speed) * max_vel
-        elif target_speed < min_vel and target_speed > 0:
-            target_vel = (target_vel / target_speed) * min_vel
-        
-        # GRADUAL ACCELERATION: Smoothly transition from current to target velocity
-        acceleration_rate = 0.2  # REDUCED: How quickly to change velocity (0-1)
-        new_vel = current_vel + acceleration_rate * (target_vel - current_vel)
-        
-        # Check if UAV is at goal position BEFORE applying velocity
-        pos = self.data.qpos[:3]
-        goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
-        
-        # GOAL STABILIZATION: If UAV reaches goal, apply strong braking to keep it there
-        if goal_dist < 0.5:  # Same threshold as reward function
-            if not self.goal_reached:
-                print(f"🎯 GOAL REACHED! Stabilizing UAV at goal position...")
-                self.goal_reached = True
-                self.goal_stabilization_steps = 0
-            
-            # Apply VERY strong braking forces to LOCK UAV at goal
-            goal_vector = CONFIG['goal_pos'] - pos
-            
-            # Check if we're very close to goal center (within 0.1m)
-            if goal_dist < 0.1:
-                # LOCK MODE: Virtually stop all movement
-                # Apply extremely strong velocity damping (99% reduction)
-                stabilization_vel = -self.data.qvel[:2] * 0.99
-                
-                # Add tiny position correction to keep centered
-                stabilization_vel += goal_vector[:2] * 5.0
-            else:
-                # APPROACH MODE: Strong position correction with damping
-                position_correction = goal_vector[:2] * 3.0  # Very strong pull toward goal
-                
-                # Strong velocity damping to eliminate momentum
-                velocity_damping = -self.data.qvel[:2] * 0.9  # Reduce current velocity by 90%
-                
-                # Combine corrections with priority on stopping motion
-                stabilization_vel = position_correction + velocity_damping
-            
-            # Limit stabilization velocity to prevent overshooting
-            stabilization_speed = np.linalg.norm(stabilization_vel)
-            max_stabilization_speed = 0.2 if goal_dist < 0.1 else 0.4
-            if stabilization_speed > max_stabilization_speed:
-                stabilization_vel = (stabilization_vel / stabilization_speed) * max_stabilization_speed
-            
-            # Apply stabilization velocity instead of action-based velocity
-            self.data.qvel[0] = float(stabilization_vel[0])
-            self.data.qvel[1] = float(stabilization_vel[1])
-            self.data.qvel[2] = 0.0
-            
-            self.goal_stabilization_steps += 1
-        else:
-            # Normal velocity control when not at goal
-            self.data.qvel[0] = float(new_vel[0])  # X velocity
-            self.data.qvel[1] = float(new_vel[1])  # Y velocity
-            self.data.qvel[2] = 0.0                # Z velocity = 0 (no vertical movement)
+        # Simple velocity control - direct action mapping
+        self.data.qvel[0] = float(target_vel[0])  # X velocity  
+        self.data.qvel[1] = float(target_vel[1])  # Y velocity
+        self.data.qvel[2] = 0.0                   # Z velocity = 0 (no vertical movement)
         
         # Maintain constant height
         self.data.qpos[2] = CONFIG['uav_flight_height']
@@ -415,14 +582,7 @@ class UAVEnv(gym.Env):
         mujoco.mj_step(self.model, self.data)
         self.step_count += 1
 
-        # Enforce velocity constraints (with curriculum limits)
-        vel_xy = self.data.qvel[:2]
-        speed_xy = np.linalg.norm(vel_xy)
-        
-        if speed_xy < min_vel and speed_xy > 0:
-            self.data.qvel[:2] = (vel_xy / speed_xy) * min_vel
-        elif speed_xy > max_vel:
-            self.data.qvel[:2] = (vel_xy / speed_xy) * max_vel
+        # No velocity constraints - allow full [-1, 1] range
         
         # Always ensure Z position stays constant
         self.data.qpos[2] = CONFIG['uav_flight_height']
@@ -443,6 +603,17 @@ class UAVEnv(gym.Env):
         reward, termination_info = self._get_reward_and_termination_info(obs)
         terminated = termination_info['terminated']
         truncated = self.step_count >= CONFIG['max_steps']
+        
+        # Update RDR rule performance based on step outcome
+        if hasattr(self, 'current_rule') and self.current_rule is not None:
+            # Define success criteria for RDR rule evaluation
+            rule_success = (
+                reward > 0 or  # Positive reward
+                (not termination_info['collision_detected'] and 
+                 not termination_info['out_of_bounds'] and
+                 self.prev_goal_dist - np.linalg.norm(CONFIG['goal_pos'] - obs[:3]) > 0)  # Made progress
+            )
+            self.update_rule_performance(rule_success)
         
         # Store termination info for logging
         self.last_termination_info = termination_info
@@ -483,9 +654,10 @@ class UAVEnv(gym.Env):
             'out_of_bounds': False
         }
         
-        # Reset goal stabilization tracking
-        self.goal_reached = False
-        self.goal_stabilization_steps = 0
+        # Goal stabilization removed - no tracking needed
+        
+        # Reset RDR tracking
+        self.current_rule = None
         
         # Regenerate obstacles for each episode
         if self.curriculum_learning:
@@ -560,48 +732,203 @@ class UAVEnv(gym.Env):
         return self._ns_los_confirm_count >= confirm_k
 
     def symbolic_action(self, t_step=None):
-        """Compute a simple goal-directed action in env action space (vx, vy, vz=0)."""
-        # Read cfg with fallbacks
-        warmup_steps = int(self.ns_cfg.get('warmup_steps', 0))
-        high_speed = float(self.ns_cfg.get('high_speed', 0.9))
-        blocked_strength = float(self.ns_cfg.get('blocked_strength', 0.1))
-
+        """Compute RDR-based action in env action space (vx, vy, vz=0)."""
         if t_step is None:
             t_step = self._episode_timestep
-
-        dir_xy, _ = self.get_goal_vector()
-
-        # Respect current velocity curriculum but cap by action space max (assumed 1.0)
-        _, max_vel = self._get_velocity_limits()
-        action_cap = float(np.max(self.action_space.high)) if np.ndim(self.action_space.high) == 0 else float(self.action_space.high[0])
-        max_action_speed = min(max_vel, action_cap)
-
-        # Distance-aware speed scaling (taper near goal)
+        
+        # Prepare context for RDR system
         pos = self.data.qpos[:3]
-        goal_dist_xy = float(np.linalg.norm((CONFIG['goal_pos'] - pos)[:2]))
-        far_dist = float(self.ns_cfg.get('distance_far_m', 3.0))
-        min_scale = float(self.ns_cfg.get('distance_min_scale', 0.4))
-        dist_scale = max(min_scale, min(1.0, goal_dist_xy / max(far_dist, 1e-6)))
-
-        if self.has_line_of_sight_to_goal():
-            speed = dist_scale * min(high_speed, max_action_speed)
+        obs = self._get_obs()
+        lidar_readings = obs[9:25]  # LIDAR data
+        
+        context = self._prepare_rdr_context(pos, lidar_readings, obs)
+        
+        # Evaluate RDR system to get applicable rule
+        applicable_rule = self.rdr_system.evaluate_rules(context)
+        self.current_rule = applicable_rule
+        
+        # Generate action based on rule
+        action = self._generate_action_from_rule(applicable_rule, context)
+        
+        # Update rule usage
+        applicable_rule.usage_count += 1
+        
+        if self.ns_cfg.get('debug_rdr', False):
+            print(f"🔍 RDR: Applied rule {applicable_rule.rule_id} - {applicable_rule.conclusion}")
+        
+        return action
+    
+    def _prepare_rdr_context(self, pos: np.ndarray, lidar_readings: np.ndarray, obs: np.ndarray) -> Dict[str, Any]:
+        """Prepare context dictionary for RDR rule evaluation"""
+        
+        # Basic positioning
+        goal_vector = CONFIG['goal_pos'] - pos
+        goal_distance = float(np.linalg.norm(goal_vector[:2]))
+        
+        # LIDAR analysis
+        min_obstacle_dist = float(np.min(lidar_readings) * CONFIG['lidar_range'])
+        mean_obstacle_dist = float(np.mean(lidar_readings) * CONFIG['lidar_range'])
+        
+        # Count blocked directions (LIDAR readings below threshold)
+        blocked_threshold = 0.3  # 30% of max LIDAR range
+        num_blocked_directions = int(np.sum(lidar_readings < blocked_threshold))
+        
+        # Boundary analysis
+        half_world = CONFIG['world_size'] / 2
+        distances_to_boundaries = np.array([
+            half_world + pos[0],  # Distance to west boundary
+            half_world - pos[0],  # Distance to east boundary
+            half_world + pos[1],  # Distance to south boundary
+            half_world - pos[1]   # Distance to north boundary
+        ])
+        distance_to_boundary = float(np.min(distances_to_boundaries))
+        
+        # Directional clearance analysis
+        sector_size = len(lidar_readings) // 4
+        clearances = {
+            'front': float(np.mean(lidar_readings[0:sector_size])),
+            'right': float(np.mean(lidar_readings[sector_size:2*sector_size])),
+            'back': float(np.mean(lidar_readings[2*sector_size:3*sector_size])),
+            'left': float(np.mean(lidar_readings[3*sector_size:4*sector_size]))
+        }
+        
+        return {
+            'position': pos,
+            'goal_vector': goal_vector,
+            'goal_distance': goal_distance,
+            'has_los_to_goal': self.has_line_of_sight_to_goal(),
+            'min_obstacle_dist': min_obstacle_dist,
+            'mean_obstacle_dist': mean_obstacle_dist,
+            'num_blocked_directions': num_blocked_directions,
+            'distance_to_boundary': distance_to_boundary,
+            'lidar_readings': lidar_readings,
+            'directional_clearances': clearances,
+            'velocity': self.data.qvel[:3],
+            'episode_step': self._episode_timestep
+        }
+    
+    def _generate_action_from_rule(self, rule: RDRRule, context: Dict[str, Any]) -> np.ndarray:
+        """Generate action based on RDR rule parameters"""
+        
+        # Get rule parameters
+        speed_multiplier = rule.action_params.get('speed_multiplier', 0.1)
+        direction_type = rule.action_params.get('direction', 'goal')
+        
+        # No velocity constraints - use full action space range
+        action_cap = float(np.max(self.action_space.high))  # Should be 1.0
+        
+        # Distance-aware speed scaling
+        goal_distance = context['goal_distance']
+        far_dist = 3.0
+        min_scale = 0.4
+        dist_scale = max(min_scale, min(1.0, goal_distance / max(far_dist, 1e-6)))
+        
+        # Calculate base speed using full action range
+        base_speed = dist_scale * speed_multiplier * action_cap
+        
+        # Generate direction vector based on rule direction type
+        if direction_type == 'goal':
+            # Direct toward goal
+            dir_xy = context['goal_vector'][:2]
+            dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
+            
+        elif direction_type == 'goal_adjusted':
+            # Toward goal but adjusted for boundary avoidance
+            dir_xy = context['goal_vector'][:2]
+            dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
+            
+            # Adjust direction away from boundaries
+            pos = context['position']
+            half_world = CONFIG['world_size'] / 2
+            
+            # Add repulsion from close boundaries
+            if abs(pos[0] + half_world) < 1.0:  # Near west boundary
+                dir_xy[0] += 0.5  # Push east
+            if abs(pos[0] - half_world) < 1.0:  # Near east boundary
+                dir_xy[0] -= 0.5  # Push west
+            if abs(pos[1] + half_world) < 1.0:  # Near south boundary
+                dir_xy[1] += 0.5  # Push north
+            if abs(pos[1] - half_world) < 1.0:  # Near north boundary
+                dir_xy[1] -= 0.5  # Push south
+            
+            dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
+            
+        elif direction_type == 'explore':
+            # Explore around obstacles - find clearest direction
+            clearances = context['directional_clearances']
+            best_direction = max(clearances, key=clearances.get)
+            
+            direction_angles = {'front': 0, 'right': np.pi/2, 'back': np.pi, 'left': 3*np.pi/2}
+            angle = direction_angles[best_direction]
+            dir_xy = np.array([np.cos(angle), np.sin(angle)])
+            
+        elif direction_type == 'backup_explore':
+            # Backup first, then explore
+            # Move opposite to current goal direction briefly, then explore
+            if context['episode_step'] % 20 < 5:  # Backup phase
+                dir_xy = -context['goal_vector'][:2]
+                dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
+            else:  # Explore phase
+                clearances = context['directional_clearances']
+                best_direction = max(clearances, key=clearances.get)
+                direction_angles = {'front': 0, 'right': np.pi/2, 'back': np.pi, 'left': 3*np.pi/2}
+                angle = direction_angles[best_direction]
+                dir_xy = np.array([np.cos(angle), np.sin(angle)])
+                
+        elif direction_type == 'careful_goal':
+            # Very careful movement toward goal
+            dir_xy = context['goal_vector'][:2]
+            dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
+            base_speed *= 0.5  # Extra speed reduction
+            
+        elif direction_type == 'avoid':
+            # Emergency avoidance - move away from closest obstacle
+            lidar_readings = context['lidar_readings']
+            closest_idx = np.argmin(lidar_readings)
+            closest_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays']
+            # Move in opposite direction
+            avoid_angle = closest_angle + np.pi
+            dir_xy = np.array([np.cos(avoid_angle), np.sin(avoid_angle)])
+            
         else:
-            speed = dist_scale * max(0.0, min(blocked_strength * max_action_speed, max_action_speed))
-
-        # Map to non-negative action space [0, 1] by dropping negative components
-        dir_pos = np.array([max(0.0, float(dir_xy[0])), max(0.0, float(dir_xy[1]))], dtype=np.float32)
-        norm = float(np.linalg.norm(dir_pos) + 1e-8)
-        if norm > 0:
-            dir_pos /= norm
-        # Construct action in env units
-        vx = float(speed * dir_pos[0])
-        vy = float(speed * dir_pos[1])
+            # Default: move toward goal
+            dir_xy = context['goal_vector'][:2]
+            dir_xy = dir_xy / (np.linalg.norm(dir_xy) + 1e-8)
+        
+        # Allow full signed action space [-1, 1] - no restrictions on negative components
+        
+        # Construct action
+        vx = float(base_speed * dir_xy[0])
+        vy = float(base_speed * dir_xy[1])
         vz = 0.0
-        a = np.array([vx, vy, vz], dtype=np.float32)
+        
+        action = np.array([vx, vy, vz], dtype=np.float32)
+        
         # Clip to action bounds
-        low = np.broadcast_to(self.action_space.low, a.shape)
-        high = np.broadcast_to(self.action_space.high, a.shape)
-        return np.clip(a, low, high)
+        low = np.broadcast_to(self.action_space.low, action.shape)
+        high = np.broadcast_to(self.action_space.high, action.shape)
+        return np.clip(action, low, high)
+    
+    def update_rule_performance(self, success: bool):
+        """Update performance of the last used RDR rule"""
+        if self.current_rule is not None:
+            self.current_rule.update_performance(success)
+    
+    def get_rdr_statistics(self):
+        """Get RDR system statistics"""
+        return self.rdr_system.get_rule_statistics()
+    
+    def print_rdr_hierarchy(self):
+        """Print the RDR rule hierarchy"""
+        self.rdr_system.print_rule_hierarchy()
+    
+    def has_specific_rdr_rule(self):
+        """Check if a specific (non-default) RDR rule is available for current state"""
+        pos = self.data.qpos[:3]
+        obs = self._get_obs()
+        lidar_readings = obs[9:25]  # LIDAR data
+        context = self._prepare_rdr_context(pos, lidar_readings, obs)
+        return self.rdr_system.has_specific_rule(context)
 
     def render(self):
         if self.render_mode == "human":
@@ -1002,35 +1329,13 @@ class UAVEnv(gym.Env):
             termination_info['collision_detected'] = True
             return reward, termination_info
             
-        # Check if goal is reached and stabilized
+        # Simple goal achievement - immediate reward and termination
         if goal_dist < 0.5:
-            if not self.goal_reached:
-                # First time reaching goal - give large reward but don't terminate yet
-                reward = 500  # Large reward for reaching goal
-                self.goal_reached = True
-                self.goal_stabilization_steps = 0
-            else:
-                # UAV is stabilizing at goal - give smaller continuous rewards
-                reward = 50  # Reward for staying at goal
-                
-                # Check if UAV has been stable at goal long enough
-                if self.goal_stabilization_steps >= self.goal_hold_duration:
-                    # Final bonus for successful goal stabilization
-                    reward += 500  # Bonus for successful stabilization
-                    termination_info['terminated'] = True
-                    termination_info['termination_reason'] = 'goal_reached_and_stabilized'
-                    print(f"✅ GOAL SUCCESSFULLY REACHED AND STABILIZED! ({self.goal_stabilization_steps} steps)")
-                    return reward, termination_info
-                elif goal_dist > 1.0:  # If UAV moves too far from goal during stabilization
-                    reward = -200  # Penalty for leaving goal area
-                    self.goal_reached = False  # Reset goal reached status
-                    self.goal_stabilization_steps = 0
-                    print(f"⚠️  UAV left goal area during stabilization. Resetting...")
-        else:
-            # Reset goal status if UAV is not near goal
-            if self.goal_reached and goal_dist > 1.0:
-                self.goal_reached = False
-                self.goal_stabilization_steps = 0
+            reward = 100  # Simple goal reward
+            termination_info['terminated'] = True
+            termination_info['termination_reason'] = 'goal_reached'
+            print(f"✅ GOAL REACHED! Distance: {goal_dist:.3f}m")
+            return reward, termination_info
         
         # === STEP REWARDS (Simplified) ===
         
@@ -1038,33 +1343,15 @@ class UAVEnv(gym.Env):
         progress = self.prev_goal_dist - goal_dist
         reward = 10.0 * progress  # Scaled up for significance
         
-        # 2. Add directional bias to encourage eastward movement if goal is eastward
-        goal_vector = CONFIG['goal_pos'] - pos
-        if goal_vector[0] > 0:  # If goal is to the east
-            # Add a strong bias for eastward movement
-            reward += 2.0 * max(0, self.data.qvel[0])  # Reward positive x velocity
-            
-            # Add stronger penalty for westward movement (going the wrong way)
-            if self.data.qvel[0] < 0:  # If moving westward
-                reward -= 5.0 * abs(self.data.qvel[0])  # Penalize negative x velocity
-        
-        # 3. Boundary awareness - add extra penalty when getting close to boundaries
-        half_world = CONFIG['world_size'] / 2
-        x_distance_to_west_boundary = abs(pos[0] + half_world)  # Distance to west boundary
-        if x_distance_to_west_boundary < 1.0:  # Getting close to western boundary
-            reward -= (1.0 - x_distance_to_west_boundary) * 10.0  # Stronger penalty closer to boundary
-        
-        # 4. LIDAR-based proximity penalties (collision avoidance)
+        # 2. Collision avoidance rewards (positive for safe navigation)
         if min_obstacle_dist < 0.3:
-            reward -= 5.0  # Very dangerous - strong penalty
+            reward -= 5.0  # Danger zone - penalty for being too close
         elif min_obstacle_dist < 0.5:
-            reward -= 2.0  # Dangerous - moderate penalty
-        elif min_obstacle_dist < 1.0:
-            reward -= 0.5  # Caution zone - mild penalty
-        
-        # 3. Safe navigation bonus (reward for good behavior)
-        if min_obstacle_dist > 1.5 and progress > 0:
-            reward += 0.5  # Bonus for maintaining safe distance while progressing
+            reward -= 1.0  # Warning zone - mild penalty
+        elif min_obstacle_dist > 1.5:
+            reward += 2.0  # Safe zone - good collision avoidance
+        elif min_obstacle_dist > 1.0:
+            reward += 0.5  # Moderate safety - small bonus
         
         # Update previous goal distance for next step
         self.prev_goal_dist = goal_dist
