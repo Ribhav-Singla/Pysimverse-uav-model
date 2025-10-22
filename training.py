@@ -3,6 +3,7 @@ import numpy as np
 from uav_env import UAVEnv, CONFIG
 from ppo_agent import PPOAgent
 import os
+import argparse
 import matplotlib
 matplotlib.use('Agg')  # non-interactive backend for saving plots
 import matplotlib.pyplot as plt
@@ -23,6 +24,14 @@ class Memory:
         del self.is_terminals[:]
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Train UAV with RDR system')
+    parser.add_argument('--lambda', dest='ns_lambda', type=float, default=1.0,
+                        help='Neurosymbolic lambda value (0=pure RL, 1=RDR when available) (default: 1.0)')
+    parser.add_argument('--episodes', type=int, default=20,
+                        help='Episodes per curriculum level (default: 10)')
+    args = parser.parse_args()
+    
     ############## Hyperparameters ##############
     env_name = "UAVEnv"
     render = False
@@ -31,7 +40,7 @@ def main():
     
     # Curriculum Learning Parameters
     curriculum_learning = True
-    episodes_per_level_count = 25  # Episodes per curriculum level (equal for all levels)
+    episodes_per_level_count = args.episodes  # Episodes per curriculum level (from command line)
     total_levels = 10           # Obstacle levels 1-10
     
     # Set equal episodes for each level
@@ -53,11 +62,9 @@ def main():
     random_seed = 0
     #############################################
 
-    # Neurosymbolic config (opt-in, lambda=0 by default)
-    # Neurosymbolic gating schedule: enable λ=1 for early episodes
-    # Alternating neurosymbolic gating across episodes (odd: 1, even: 0)
-    ns_lambda = 1.0  # will be updated per-episode below
-    use_neurosymbolic = False  # will be set per-episode below
+    # Neurosymbolic config from command line arguments
+    ns_lambda = args.ns_lambda  # Use command line argument
+    use_neurosymbolic = (ns_lambda > 0.0)  # Enable neurosymbolic if lambda > 0
     ns_cfg = {
         'use_neurosymbolic': use_neurosymbolic,
         'lambda': ns_lambda,
@@ -78,10 +85,14 @@ def main():
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
 
-    # checkpoint path
+    # checkpoint path with lambda value
     checkpoint_path = "PPO_preTrained/{}/".format(env_name)
     if not os.path.exists(checkpoint_path):
         os.makedirs(checkpoint_path)
+    
+    # Create weights filename with lambda value
+    lambda_str = f"lambda_{ns_lambda:.1f}".replace(".", "_")  # Convert 1.0 to "lambda_1_0"
+    weights_filename = f"PPO_UAV_Weights_{lambda_str}.pth"
 
     if random_seed:
         print("--------------------------------------------------------------------------------------------")
@@ -108,36 +119,53 @@ def main():
     episode_rewards_list = []
     episode_success_list = []  # 1 if goal reached this episode else 0
 
-    def save_training_plots():
+    def save_training_plots(lambda_val):
         if len(episode_indices) == 0:
             return
-        # Compute rolling averages (window 50)
-        window = min(50, len(episode_rewards_list))
+        
+        # Calculate exponential moving averages
+        alpha = 0.05  # Smoothing factor (0.05 = more smoothing, 0.3 = less smoothing)
         rewards_np = np.array(episode_rewards_list, dtype=float)
         success_np = np.array(episode_success_list, dtype=float)
-        if window > 1:
-            roll_rewards = np.convolve(rewards_np, np.ones(window)/window, mode='valid')
-            roll_success = np.convolve(success_np, np.ones(window)/window, mode='valid')
-            x_roll = episode_indices[window-1:]
-        else:
-            roll_rewards = rewards_np
-            roll_success = success_np
-            x_roll = episode_indices
+        
+        # Initialize EMA arrays
+        ema_rewards = np.zeros_like(rewards_np)
+        ema_success = np.zeros_like(success_np)
+        
+        # Calculate EMA
+        ema_rewards[0] = rewards_np[0]
+        ema_success[0] = success_np[0]
+        for i in range(1, len(rewards_np)):
+            ema_rewards[i] = alpha * rewards_np[i] + (1 - alpha) * ema_rewards[i-1]
+            ema_success[i] = alpha * success_np[i] + (1 - alpha) * ema_success[i-1]
+        
+        # Use full length arrays for plotting
+        roll_rewards = ema_rewards
+        roll_success = ema_success
+        x_roll = episode_indices
 
         plt.figure(figsize=(10, 6))
         plt.subplot(2, 1, 1)
         plt.plot(episode_indices, rewards_np, color='lightgray', label='Reward')
-        plt.plot(x_roll, roll_rewards, color='blue', label=f'Reward MA({window})')
+        plt.plot(x_roll, roll_rewards, color='blue', label='Reward EMA')
         plt.xlabel('Episode')
         plt.ylabel('Reward')
         plt.title('Episode Reward')
-        plt.ylim(-2000, 2000)
+        
+        # Use reasonable range based on actual data
+        if len(rewards_np) > 0:
+            reward_min = max(-200, np.percentile(rewards_np, 5))  # 5th percentile, but not below -200
+            reward_max = min(200, np.percentile(rewards_np, 95))   # 95th percentile, but not above 200
+            plt.ylim(reward_min, reward_max)
+        else:
+            plt.ylim(-200, 200)
+        
         plt.legend(loc='best')
         plt.grid(True, alpha=0.3)
 
         plt.subplot(2, 1, 2)
         plt.plot(episode_indices, success_np, '.', color='lightgray', label='Success (0/1)')
-        plt.plot(x_roll, roll_success, color='green', label=f'Success Rate MA({window})')
+        plt.plot(x_roll, roll_success, color='green', label='Success Rate EMA')
         plt.xlabel('Episode')
         plt.ylabel('Success')
         plt.title('Goal Reached')
@@ -145,12 +173,21 @@ def main():
         plt.legend(loc='best')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
-        plt.savefig('training_metrics.png', dpi=150)
+        
+        # Include lambda value in plot filename
+        plot_filename = f'training_metrics_lambda_{lambda_val:.1f}.png'.replace('.', '_')
+        plt.savefig(plot_filename, dpi=150)
         plt.close()
 
     print("--------------------------------------------------------------------------------------------")
     print("🚀 OPTIMIZED PPO TRAINING CONFIGURATION")
     print("--------------------------------------------------------------------------------------------")
+    print("🧭 NEUROSYMBOLIC CONFIGURATION:")
+    print(f"   - Lambda (λ): {ns_lambda} {'(RDR when available)' if ns_lambda >= 1.0 else '(Pure RL)' if ns_lambda == 0.0 else '(Hybrid mode)'}")
+    print(f"   - Weights filename: {weights_filename}")
+    print(f"   - Episodes per level: {episodes_per_level_count}")
+    print(f"   - RDR system: {'ENABLED' if use_neurosymbolic else 'DISABLED'}")
+    print()
     print("📊 OBSERVATION SPACE UPGRADE:")
     print(f"   - State Dimension: {state_dim}D (was 25D)")
     print(f"   - Raw LIDAR: 16 rays (normalized to [0,1])")
@@ -212,8 +249,8 @@ def main():
     print("   - CSV files will be refreshed for each training session")
     print("--------------------------------------------------------------------------------------------")
     
-    # Load pre-trained weights (using relative path)
-    pretrained_weights = os.path.join(checkpoint_path, "PPO_UAV_Weights.pth")
+    # Load pre-trained weights (using lambda-specific filename)
+    pretrained_weights = os.path.join(checkpoint_path, weights_filename)
     if os.path.exists(pretrained_weights):
         print("Loading pre-trained weights from:", pretrained_weights)
         try:
@@ -265,13 +302,9 @@ def main():
                 print(f"   - Target episodes: {episodes_per_level[current_level_index]}")
                 print("-" * 60)
         
-        # Update per-episode lambda and neurosymbolic active flag
-        # λ alternates per episode: 1 for odd episodes, 0 for even episodes
-        # ns_lambda = 1.0 if (i_episode % 2 == 1) else 0.0
-        ns_lambda=1
-
-
-        use_neurosymbolic = (ns_lambda >= 1.0)
+        # Use command line lambda value (no per-episode changes)
+        # ns_lambda is already set from command line arguments
+        use_neurosymbolic = (ns_lambda > 0.0)
 
         state, _ = env.reset()
         # Set current episode number for CSV logging and adaptive thresholds
@@ -326,6 +359,7 @@ def main():
                         print(f"[RDR] Episode {i_episode} Step {t}: Using RDR rule {rule_id}")
                 else:
                     # No specific rule available - fall back to RL agent
+                    final_action = ppo_action_np  # Use PPO action when no RDR rule is available
                     action_source = "PPO_FALLBACK"
                     if (t % 100) == 0:
                         print(f"[FALLBACK] Episode {i_episode} Step {t}: No specific RDR rule available, using PPO")
@@ -436,8 +470,8 @@ def main():
             print(f"Excellent performance with reward: {episode_reward:.1f}")
             print(f"Episode length: {episode_length} steps")
             # Save the model but continue training
-            ppo_agent.save(os.path.join(checkpoint_path, "PPO_UAV_Weights.pth"))
-            print(f"Model saved to {os.path.join(checkpoint_path, 'PPO_UAV_Weights.pth')}")
+            ppo_agent.save(os.path.join(checkpoint_path, weights_filename))
+            print(f"Model saved to {os.path.join(checkpoint_path, weights_filename)}")
             print("🔄 Continuing training for more robustness...")
             print("-" * 50)
         
@@ -451,7 +485,7 @@ def main():
                 print(f"   Success threshold: {early_stop_threshold*100:.0f}%")
                 print(f"{'='*60}")
                 # Update the main model but continue training
-                ppo_agent.save(os.path.join(checkpoint_path, "PPO_UAV_Weights.pth"))
+                ppo_agent.save(os.path.join(checkpoint_path, weights_filename))
                 print(f"✅ Model updated! Continuing training for more robustness...")
                 print("-" * 60)
 
@@ -469,7 +503,7 @@ def main():
         # Save model periodically and track best performance
         if i_episode % log_interval == 0:
             # Always update the same weights file with the latest model
-            ppo_agent.save(os.path.join(checkpoint_path, "PPO_UAV_Weights.pth"))
+            ppo_agent.save(os.path.join(checkpoint_path, weights_filename))
             
             # Print training progress summary
             print(f"\n=== Training Progress Summary (Episode {i_episode}) ===")
@@ -511,7 +545,7 @@ def main():
             print("=" * 50)
 
             # Save metrics plot periodically
-            save_training_plots()
+            save_training_plots(ns_lambda)
 
 if __name__ == '__main__':
     main()

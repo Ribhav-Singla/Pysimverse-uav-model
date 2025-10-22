@@ -21,11 +21,9 @@ CONFIG = {
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
     'control_dt': 0.05,
-    'max_steps': 10000,  # Max steps per episode
-    'boundary_penalty': -100,  # Penalty for going out of bounds
+    'max_steps': 20000,  # Max steps per episode
     'lidar_range': 2.9,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
-    'step_reward': -0.01,    # Survival bonus per timestep
 }
 
 class RDRRule:
@@ -76,134 +74,54 @@ class RDRRuleSystem:
         self.initialize_default_rules()
         
     def initialize_default_rules(self):
-        """Initialize the default rule hierarchy for UAV navigation"""
+        """Initialize the simplified rule hierarchy for UAV navigation"""
         
-        # Root rule: Default behavior
+        # Default rule: No specific situation detected
         self.default_rule = RDRRule(
             rule_id="R0_DEFAULT",
             condition=lambda ctx: True,  # Always true (fallback)
-            conclusion="Default: Move slowly toward goal",
-            action_params={"speed_multiplier": 0.1, "direction": "goal"}
+            conclusion="No specific situation: Let PPO handle",
+            action_params={"speed_modifier": 0.0, "direction": "ppo"}
         )
         self.all_rules["R0_DEFAULT"] = self.default_rule
         
-        # Rule 1: Clear path to goal
+        # Rule 1: Clear path to goal - increase velocity toward goal
         rule_clear_path = RDRRule(
             rule_id="R1_CLEAR_PATH",
-            condition=self._condition_clear_path,
-            conclusion="Clear path: Move fast toward goal",
-            action_params={"speed_multiplier": 0.9, "direction": "goal"}
+            condition=self._condition_clear_path_to_goal,
+            conclusion="Clear path to goal: Move faster toward goal",
+            action_params={"speed_modifier": 0.3, "direction": "goal"}
         )
         self.default_rule.add_exception(rule_clear_path)
         self.all_rules["R1_CLEAR_PATH"] = rule_clear_path
         
-        # Exception 1.1: Clear path but near obstacle
-        rule_clear_but_near = RDRRule(
-            rule_id="R1_1_CLEAR_BUT_NEAR",
-            condition=self._condition_clear_but_near_obstacle,
-            conclusion="Clear path but near obstacle: Move moderately toward goal",
-            action_params={"speed_multiplier": 0.5, "direction": "goal"}
+        # Rule 2: Very close to obstacles or boundaries - decrease velocity
+        rule_danger_zone = RDRRule(
+            rule_id="R2_DANGER_ZONE",
+            condition=self._condition_very_close_danger,
+            conclusion="Very close to obstacles/boundaries: Slow down",
+            action_params={"speed_modifier": -0.2, "direction": "goal"}
         )
-        rule_clear_path.add_exception(rule_clear_but_near)
-        self.all_rules["R1_1_CLEAR_BUT_NEAR"] = rule_clear_but_near
+        self.default_rule.add_exception(rule_danger_zone)
+        self.all_rules["R2_DANGER_ZONE"] = rule_danger_zone
         
-        # Exception 1.2: Clear path but near boundary
-        rule_clear_but_boundary = RDRRule(
-            rule_id="R1_2_CLEAR_BUT_BOUNDARY",
-            condition=self._condition_clear_but_near_boundary,
-            conclusion="Clear path but near boundary: Reduce speed and adjust direction",
-            action_params={"speed_multiplier": 0.3, "direction": "goal_adjusted"}
-        )
-        rule_clear_path.add_exception(rule_clear_but_boundary)
-        self.all_rules["R1_2_CLEAR_BUT_BOUNDARY"] = rule_clear_but_boundary
-        
-        # Rule 2: Blocked path - explore around obstacle
-        rule_blocked_path = RDRRule(
-            rule_id="R2_BLOCKED_PATH",
-            condition=self._condition_blocked_path,
-            conclusion="Blocked path: Explore around obstacle",
-            action_params={"speed_multiplier": 0.2, "direction": "explore"}
-        )
-        self.default_rule.add_exception(rule_blocked_path)
-        self.all_rules["R2_BLOCKED_PATH"] = rule_blocked_path
-        
-        # Exception 2.1: Blocked and in corner
-        rule_blocked_corner = RDRRule(
-            rule_id="R2_1_BLOCKED_CORNER",
-            condition=self._condition_blocked_and_cornered,
-            conclusion="Blocked and cornered: Backup and then explore",
-            action_params={"speed_multiplier": 0.15, "direction": "backup_explore"}
-        )
-        rule_blocked_path.add_exception(rule_blocked_corner)
-        self.all_rules["R2_1_BLOCKED_CORNER"] = rule_blocked_corner
-        
-        # Exception 2.2: Blocked but goal very close
-        rule_blocked_goal_close = RDRRule(
-            rule_id="R2_2_BLOCKED_GOAL_CLOSE",
-            condition=self._condition_blocked_but_goal_close,
-            conclusion="Blocked but goal close: Careful navigation",
-            action_params={"speed_multiplier": 0.1, "direction": "careful_goal"}
-        )
-        rule_blocked_path.add_exception(rule_blocked_goal_close)
-        self.all_rules["R2_2_BLOCKED_GOAL_CLOSE"] = rule_blocked_goal_close
-        
-        # Rule 3: Emergency situations
-        rule_emergency = RDRRule(
-            rule_id="R3_EMERGENCY",
-            condition=self._condition_emergency,
-            conclusion="Emergency: Immediate avoidance",
-            action_params={"speed_multiplier": 0.05, "direction": "avoid"}
-        )
-        self.default_rule.add_exception(rule_emergency)
-        self.all_rules["R3_EMERGENCY"] = rule_emergency
-        
-        print(f"🔧 RDR System Initialized with {len(self.all_rules)} rules")
+        print(f"🔧 Simplified RDR System Initialized with {len(self.all_rules)} rules")
     
     # =====================
-    # Condition Functions
+    # Condition Functions (Simplified)
     # =====================
     
-    def _condition_clear_path(self, ctx: Dict[str, Any]) -> bool:
-        """Check if there's a CONFIDENT clear path to goal - high confidence required"""
-        return (ctx.get('has_los_to_goal', False) and 
-                ctx.get('min_obstacle_dist', 0) > 1.2 and      # Far from obstacles (high confidence)
-                ctx.get('distance_to_boundary', 0) > 1.5 and   # Far from boundaries  
-                ctx.get('goal_distance', float('inf')) > 1.0)  # Not too close to goal (avoid jitter)
+    def _condition_clear_path_to_goal(self, ctx: Dict[str, Any]) -> bool:
+        """Rule 1: Clear path to goal - check if line of sight is clear"""
+        return ctx.get('has_los_to_goal', False)
     
-    def _condition_clear_but_near_obstacle(self, ctx: Dict[str, Any]) -> bool:
-        """Clear path but dangerously close to obstacles - specific danger zone"""
-        return (ctx.get('has_los_to_goal', False) and 
-                0.5 < ctx.get('min_obstacle_dist', float('inf')) < 1.2 and  # Specific danger range
-                ctx.get('distance_to_boundary', 0) > 1.0)  # Not near boundary (different rule)
-    
-    def _condition_clear_but_near_boundary(self, ctx: Dict[str, Any]) -> bool:
-        """Clear path but close to world boundary - boundary-specific issue"""
-        return (ctx.get('has_los_to_goal', False) and 
-                ctx.get('distance_to_boundary', float('inf')) < 1.0 and
-                ctx.get('min_obstacle_dist', 0) > 0.8)  # Not also near obstacles
-    
-    def _condition_blocked_path(self, ctx: Dict[str, Any]) -> bool:
-        """Path to goal is blocked - confident blocking with safe distance"""
-        return (not ctx.get('has_los_to_goal', False) and
-                ctx.get('min_obstacle_dist', 0) > 0.8 and      # Not in emergency zone
-                ctx.get('distance_to_boundary', 0) > 1.0 and   # Not near boundaries
-                ctx.get('num_blocked_directions', 0) < 3)      # Not cornered (different rule)
-    
-    def _condition_blocked_and_cornered(self, ctx: Dict[str, Any]) -> bool:
-        """Blocked path and UAV is in a corner/tight space - specific cornering situation"""
-        return (not ctx.get('has_los_to_goal', False) and
-                (ctx.get('num_blocked_directions', 0) >= 3 or   # Many blocked directions OR
-                 ctx.get('distance_to_boundary', float('inf')) < 0.8))  # Very close to boundary
-    
-    def _condition_blocked_but_goal_close(self, ctx: Dict[str, Any]) -> bool:
-        """Path blocked but goal is very close - precision navigation required"""
-        return (not ctx.get('has_los_to_goal', False) and
-                ctx.get('goal_distance', float('inf')) < 1.2 and  # Goal is close
-                ctx.get('min_obstacle_dist', 0) > 0.5)  # Not in emergency
-    
-    def _condition_emergency(self, ctx: Dict[str, Any]) -> bool:
-        """Emergency situation - immediate collision danger"""
-        return ctx.get('min_obstacle_dist', float('inf')) < 0.4  # Increased threshold for emergency
+    def _condition_very_close_danger(self, ctx: Dict[str, Any]) -> bool:
+        """Rule 2: Very close to obstacles or boundaries - immediate danger"""
+        min_obstacle_dist = ctx.get('min_obstacle_dist', float('inf'))
+        distance_to_boundary = ctx.get('distance_to_boundary', float('inf'))
+
+        # Very close to obstacles (less than 0.8m) OR very close to boundary (less than 1.0m)
+        return (min_obstacle_dist < 0.8 or distance_to_boundary < 1.0)
     
     def evaluate_rules(self, context: Dict[str, Any]) -> RDRRule:
         """Evaluate the rule hierarchy and return the most specific applicable rule"""
@@ -211,9 +129,21 @@ class RDRRuleSystem:
     
     def has_specific_rule(self, context: Dict[str, Any]) -> bool:
         """Check if any specific (non-default) rule applies to the context"""
-        # Use the actual evaluation process and check if result is not default
-        applicable_rule = self.evaluate_rules(context)
-        return applicable_rule.rule_id != "R0_DEFAULT"
+        # Check the 2 simplified specific rules (not the default rule R0)
+        specific_rules = [
+            "R1_CLEAR_PATH",
+            "R2_DANGER_ZONE"
+        ]
+        
+        # Check if any specific rule condition is met
+        for rule_id in specific_rules:
+            if rule_id in self.all_rules:
+                rule = self.all_rules[rule_id]
+                if rule.evaluate_condition(context):
+                    return True
+        
+        # No specific rule applies, should use PPO
+        return False
     
     def _evaluate_rule_recursive(self, rule: RDRRule, context: Dict[str, Any]) -> RDRRule:
         """Recursively evaluate rules, checking exceptions first"""
@@ -511,9 +441,6 @@ class UAVEnv(gym.Env):
 
         # Episode-local timestep counter (for neurosymbolic warmup logic)
         self._episode_timestep = 0
-        # Neurosymbolic LOS confirmation and cooldown tracking
-        self._ns_los_confirm_count = 0
-        self._ns_cooldown_steps_remaining = 0
         
         # Initialize RDR (Ripple Down Rules) system
         self.rdr_system = RDRRuleSystem()
@@ -565,17 +492,6 @@ class UAVEnv(gym.Env):
         self.data.qvel[2] = 0.0
         
         obs = self._get_obs()
-        # Update near-miss cooldown when neurosymbolic is active
-        if self.ns_cfg.get('use_neurosymbolic', False) and float(self.ns_cfg.get('lambda', 0.0)) >= 1.0:
-            lidar_vals = obs[9:25]
-            min_norm = float(np.min(lidar_vals))
-            lidar_min_m = min_norm * CONFIG['lidar_range']
-            near_miss_thresh = float(self.ns_cfg.get('near_miss_threshold_m', 0.5))
-            cooldown_steps = int(self.ns_cfg.get('near_miss_cooldown_steps', 10))
-            if lidar_min_m < near_miss_thresh:
-                self._ns_cooldown_steps_remaining = cooldown_steps
-            elif self._ns_cooldown_steps_remaining > 0:
-                self._ns_cooldown_steps_remaining -= 1
         reward, termination_info = self._get_reward_and_termination_info(obs)
         terminated = termination_info['terminated']
         truncated = self.step_count >= CONFIG['max_steps']
@@ -606,8 +522,6 @@ class UAVEnv(gym.Env):
         super().reset(seed=seed)
         self.step_count = 0
         self._episode_timestep = 0
-        self._ns_los_confirm_count = 0
-        self._ns_cooldown_steps_remaining = 0
         
         # Set dynamic goal position (randomly select from three available corners)
         CONFIG['goal_pos'] = self._get_random_goal_position()
@@ -664,25 +578,16 @@ class UAVEnv(gym.Env):
     # =====================
     # Neurosymbolic helpers
     # =====================
-    def get_goal_vector(self):
-        """Return unit vector from UAV to goal (2D XY) and distance."""
-        pos = self.data.qpos[:3]
-        vec = CONFIG['goal_pos'] - pos
-        dist = float(np.linalg.norm(vec[:2]) + 1e-8)
-        dir_xy = vec[:2] / dist
-        return dir_xy, dist
+
 
     def has_line_of_sight_to_goal(self):
-        """LOS check with angular safety margin and confirmation steps; disabled during cooldown."""
+        """Simple LOS check with angular safety margin."""
         pos = self.data.qpos[:3]
         goal_vec = CONFIG['goal_pos'] - pos
         goal_dist = float(np.linalg.norm(goal_vec[:2]))
         if goal_dist <= 1e-6:
             return True
-        # Disable LOS during cooldown
-        if self._ns_cooldown_steps_remaining > 0:
-            self._ns_los_confirm_count = 0
-            return False
+        
         # Angular margin (degrees -> radians)
         ang_margin_deg = float(self.ns_cfg.get('los_angle_margin_deg', 5.0))
         ang_margin = np.radians(ang_margin_deg)
@@ -699,13 +604,9 @@ class UAVEnv(gym.Env):
                 obs_dist = self._ray_obstacle_intersection(pos, rd, obs)
                 if obs_dist < min_obs_dist:
                     min_obs_dist = obs_dist
-        los_now = (min_obs_dist >= goal_dist - 1e-6)
-        confirm_k = int(self.ns_cfg.get('los_confirm_steps', 3))
-        if los_now:
-            self._ns_los_confirm_count = min(self._ns_los_confirm_count + 1, confirm_k)
-        else:
-            self._ns_los_confirm_count = 0
-        return self._ns_los_confirm_count >= confirm_k
+        
+        # Direct LOS check - no confirmation steps needed
+        return (min_obs_dist >= goal_dist - 1e-6)
 
     def symbolic_action(self, t_step=None):
         """Compute RDR-based action in env action space (vx, vy, vz=0)."""
@@ -738,21 +639,15 @@ class UAVEnv(gym.Env):
         return action
     
     def _prepare_rdr_context(self, pos: np.ndarray, lidar_readings: np.ndarray, obs: np.ndarray) -> Dict[str, Any]:
-        """Prepare context dictionary for RDR rule evaluation"""
+        """Prepare context dictionary for RDR rule evaluation - simplified"""
         
         # Basic positioning
         goal_vector = CONFIG['goal_pos'] - pos
-        goal_distance = float(np.linalg.norm(goal_vector[:2]))
         
-        # LIDAR analysis
+        # LIDAR analysis - only minimum distance needed
         min_obstacle_dist = float(np.min(lidar_readings) * CONFIG['lidar_range'])
-        mean_obstacle_dist = float(np.mean(lidar_readings) * CONFIG['lidar_range'])
         
-        # Count blocked directions (LIDAR readings below threshold)
-        blocked_threshold = 0.3  # 30% of max LIDAR range
-        num_blocked_directions = int(np.sum(lidar_readings < blocked_threshold))
-        
-        # Boundary analysis
+        # Boundary analysis - only minimum distance needed
         half_world = CONFIG['world_size'] / 2
         distances_to_boundaries = np.array([
             half_world + pos[0],  # Distance to west boundary
@@ -762,35 +657,19 @@ class UAVEnv(gym.Env):
         ])
         distance_to_boundary = float(np.min(distances_to_boundaries))
         
-        # Directional clearance analysis
-        sector_size = len(lidar_readings) // 4
-        clearances = {
-            'front': float(np.mean(lidar_readings[0:sector_size])),
-            'right': float(np.mean(lidar_readings[sector_size:2*sector_size])),
-            'back': float(np.mean(lidar_readings[2*sector_size:3*sector_size])),
-            'left': float(np.mean(lidar_readings[3*sector_size:4*sector_size]))
-        }
-        
         return {
-            'position': pos,
             'goal_vector': goal_vector,
-            'goal_distance': goal_distance,
             'has_los_to_goal': self.has_line_of_sight_to_goal(),
             'min_obstacle_dist': min_obstacle_dist,
-            'mean_obstacle_dist': mean_obstacle_dist,
-            'num_blocked_directions': num_blocked_directions,
             'distance_to_boundary': distance_to_boundary,
-            'lidar_readings': lidar_readings,
-            'directional_clearances': clearances,
-            'velocity': self.data.qvel[:3],
-            'episode_step': self._episode_timestep
+            'velocity': self.data.qvel[:3]
         }
     
     def _generate_action_from_rule(self, rule: RDRRule, context: Dict[str, Any]) -> np.ndarray:
-        """Generate action based on RDR rule parameters with velocity modification approach"""
+        """Generate action based on RDR rule parameters - simplified"""
         
         # Get rule parameters
-        direction_type = rule.action_params.get('direction', 'goal')
+        speed_modifier = rule.action_params.get('speed_modifier', 0.2)
         
         # Get current velocity and goal direction
         current_vel = context['velocity'][:2]  # X,Y velocity
@@ -799,120 +678,19 @@ class UAVEnv(gym.Env):
         
         # Start with current velocity as base
         modified_vel = current_vel.copy()
-        vel_magnitude = np.linalg.norm(current_vel)
         
-        # Velocity modification based on rule type and current speed
+        # Simple velocity modification based on rule type
         if rule.rule_id == "R1_CLEAR_PATH":
-            # Clear path: Increase velocity if moving slowly
-            if 0 < vel_magnitude < 0.9:
-                # Add 0.1 to velocity magnitude towards goal
-                if vel_magnitude > 0.01:
-                    vel_dir = current_vel / vel_magnitude
-                    modified_vel = vel_dir * min(0.9, vel_magnitude + 0.1)
-                else:
-                    # If stationary, start moving towards goal
-                    modified_vel = goal_direction * 0.1
+            # Clear path: Increase velocity toward goal
+            modified_vel = current_vel + speed_modifier * goal_direction
+            
+        elif rule.rule_id == "R2_DANGER_ZONE":
+            # Danger zone: Decrease velocity
+            modified_vel = current_vel - speed_modifier * goal_direction
+            
         
-        elif rule.rule_id in ["R1_1_CLEAR_BUT_NEAR", "R2_BLOCKED_PATH", "R1_2_CLEAR_BUT_BOUNDARY"]:
-            # Near obstacles or blocked: Reduce velocity if moving fast
-            if 0 < vel_magnitude < 0.9:
-                # Subtract 0.1 from velocity magnitude
-                if vel_magnitude > 0.1:
-                    vel_dir = current_vel / vel_magnitude
-                    modified_vel = vel_dir * max(0.1, vel_magnitude - 0.1)
-                else:
-                    # If moving very slowly, maintain minimum movement towards goal
-                    modified_vel = goal_direction * 0.05
-        
-        elif rule.rule_id in ["R2_1_BLOCKED_CORNER", "R2_2_BLOCKED_GOAL_CLOSE"]:
-            # Cornered or goal close: Very conservative velocity reduction
-            if 0 < vel_magnitude < 0.9:
-                if vel_magnitude > 0.05:
-                    vel_dir = current_vel / vel_magnitude
-                    modified_vel = vel_dir * max(0.05, vel_magnitude - 0.15)
-                else:
-                    # If moving very slowly, maintain very slow movement
-                    modified_vel = goal_direction * 0.03
-        
-        elif rule.rule_id == "R3_EMERGENCY":
-            # Emergency: Immediate velocity reduction with escape direction
-            lidar_readings = context['lidar_readings']
-            closest_idx = np.argmin(lidar_readings)
-            escape_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays'] + np.pi
-            escape_dir = np.array([np.cos(escape_angle), np.sin(escape_angle)])
-            
-            if 0 < vel_magnitude < 0.9:
-                if vel_magnitude > 0.1:
-                    # Moving fast - reduce speed dramatically but keep some movement
-                    modified_vel = escape_dir * max(0.05, vel_magnitude - 0.3)
-                else:
-                    # Moving slow - gentle escape movement
-                    modified_vel = escape_dir * max(0.03, vel_magnitude - 0.05)
-            else:
-                # Stationary - start escape movement
-                modified_vel = escape_dir * 0.05
-        
-        else:  # Default rule
-            # Default: Maintain current velocity or move slowly towards goal
-            if vel_magnitude < 0.01:
-                modified_vel = goal_direction * 0.05
-            else:
-                modified_vel = current_vel.copy()
-        
-        # Apply directional adjustment based on rule direction type
-        if direction_type == 'goal_adjusted':
-            # Adjust direction away from boundaries
-            pos = context['position']
-            half_world = CONFIG['world_size'] / 2
-            
-            # Create adjustment vector for boundary avoidance
-            adjustment = np.zeros(2)
-            if abs(pos[0] + half_world) < 1.0:  # Near west boundary
-                adjustment[0] += 0.3  # Push east
-            if abs(pos[0] - half_world) < 1.0:  # Near east boundary
-                adjustment[0] -= 0.3  # Push west
-            if abs(pos[1] + half_world) < 1.0:  # Near south boundary
-                adjustment[1] += 0.3  # Push north
-            if abs(pos[1] - half_world) < 1.0:  # Near north boundary
-                adjustment[1] -= 0.3  # Push south
-            
-            # Apply boundary adjustment to modified velocity
-            modified_vel += adjustment
-            
-        elif direction_type == 'explore':
-            # Explore around obstacles - adjust toward clearest direction
-            clearances = context['directional_clearances']
-            best_direction = max(clearances, key=clearances.get)
-            
-            direction_angles = {'front': 0, 'right': np.pi/2, 'back': np.pi, 'left': 3*np.pi/2}
-            angle = direction_angles[best_direction]
-            explore_dir = np.array([np.cos(angle), np.sin(angle)])
-            
-            # Blend current velocity with exploration direction
-            modified_vel = 0.7 * modified_vel + 0.3 * explore_dir * 0.2
-            
-        elif direction_type == 'backup_explore':
-            # Backup first, then explore
-            if context['episode_step'] % 20 < 5:  # Backup phase
-                # Move opposite to goal direction
-                modified_vel = -goal_direction * 0.1
-            else:  # Explore phase
-                clearances = context['directional_clearances']
-                best_direction = max(clearances, key=clearances.get)
-                direction_angles = {'front': 0, 'right': np.pi/2, 'back': np.pi, 'left': 3*np.pi/2}
-                angle = direction_angles[best_direction]
-                explore_dir = np.array([np.cos(angle), np.sin(angle)])
-                modified_vel = explore_dir * 0.15
-                
-        elif direction_type == 'avoid':
-            # Emergency avoidance - move away from closest obstacle
-            lidar_readings = context['lidar_readings']
-            closest_idx = np.argmin(lidar_readings)
-            closest_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays']
-            # Move in opposite direction
-            avoid_angle = closest_angle + np.pi
-            avoid_dir = np.array([np.cos(avoid_angle), np.sin(avoid_angle)])
-            modified_vel = avoid_dir * 0.1  # Emergency avoidance speed
+        # Clip velocity components to [-1, 1] range
+        modified_vel = np.clip(modified_vel, -1.0, 1.0)
         
         # Construct action using modified velocity
         vx = float(modified_vel[0])
@@ -1365,10 +1143,6 @@ class UAVEnv(gym.Env):
             reward -= 5.0  # Danger zone - penalty for being too close
         elif min_obstacle_dist < 0.5:
             reward -= 1.0  # Warning zone - mild penalty
-        elif min_obstacle_dist > 1.5:
-            reward += 2.0  # Safe zone - good collision avoidance
-        elif min_obstacle_dist > 1.0:
-            reward += 0.5  # Moderate safety - small bonus
         
         # Update previous goal distance for next step
         self.prev_goal_dist = goal_dist
@@ -1376,52 +1150,98 @@ class UAVEnv(gym.Env):
         return reward, termination_info
 
     def _check_out_of_bounds(self, pos):
-        """Check if UAV position is outside the world boundaries"""
+        """Check if UAV position is outside the world boundaries with strict enforcement"""
         half_world = CONFIG['world_size'] / 2
-        boundary_tolerance = 0.05  # REDUCED: Stricter tolerance for numerical errors
         
-        # Create a smaller effective boundary to prevent getting too close to edges
-        effective_boundary = half_world - 0.1
+        # Strict boundary enforcement with small safety margin
+        safety_margin = 0.05  # 5cm safety margin
+        max_boundary = half_world - safety_margin
+        min_boundary = -half_world + safety_margin
         
-        # Apply strictest check to western boundary (x negative) where we have problems
-        western_boundary = -half_world + 0.2  # Even stricter western boundary
+        # Check all boundaries strictly
+        out_of_bounds = (
+            pos[0] < min_boundary or  # West boundary
+            pos[0] > max_boundary or  # East boundary  
+            pos[1] < min_boundary or  # South boundary
+            pos[1] > max_boundary or  # North boundary
+            pos[2] < 0.3 or          # Too low (below minimum flight height)
+            pos[2] > 2.0             # Too high (above maximum flight height)
+        )
         
-        return (pos[0] < western_boundary or  # Stricter western boundary
-                pos[0] > effective_boundary or 
-                abs(pos[1]) > effective_boundary or 
-                pos[2] < 0.5 or   # Too low (but shouldn't happen with constant height)
-                pos[2] > 1.5)     # Too high (but shouldn't happen with constant height)
+        if out_of_bounds:
+            boundary_type = "unknown"
+            if pos[0] < min_boundary:
+                boundary_type = "west"
+            elif pos[0] > max_boundary:
+                boundary_type = "east"
+            elif pos[1] < min_boundary:
+                boundary_type = "south"
+            elif pos[1] > max_boundary:
+                boundary_type = "north"
+            elif pos[2] < 0.3:
+                boundary_type = "below"
+            elif pos[2] > 2.0:
+                boundary_type = "above"
+                
+            print(f"🚫 OUT OF BOUNDS! UAV at [{pos[0]:.3f}, {pos[1]:.3f}, {pos[2]:.3f}] exceeded {boundary_type} boundary (world size: ±{half_world})")
+        
+        return out_of_bounds
 
     def _get_collision_threshold(self):
         """Get adaptive collision threshold based on training progress (curriculum)"""
-        episode = self.current_episode
+        episode = getattr(self, 'current_episode', 0)
         
-        if episode < 500:
+        # More aggressive collision thresholds to prevent flying through obstacles
+        if episode < 200:
+            return 0.20  # Very lenient early training
+        elif episode < 500:
             return 0.15  # Lenient early training
-        elif episode < 1500:
-            return 0.13  # Moderate
-        elif episode < 3000:
-            return 0.11  # Getting stricter
+        elif episode < 1000:
+            return 0.12  # Moderate
+        elif episode < 2000:
+            return 0.10  # Getting stricter
         else:
-            return 0.10  # Final strict threshold
+            return 0.08  # Final strict threshold - no flying through obstacles!
 
     def _check_collision(self, uav_pos):
+        """Check if UAV is colliding with any obstacle with improved collision detection"""
         collision_threshold = self._get_collision_threshold()
         
         for obs in self.obstacles:
             obs_pos = np.array(obs['pos'])
+            
             if obs['shape'] == 'box':
+                # Box collision: distance to box surface
                 dx = max(abs(uav_pos[0] - obs_pos[0]) - obs['size'][0], 0)
-                dy = max(abs(uav_pos[1] - obs_pos[1]) - obs['size'][1], 0)
+                dy = max(abs(uav_pos[1] - obs_pos[1]) - obs['size'][1], 0) 
                 dz = max(abs(uav_pos[2] - obs_pos[2]) - obs['size'][2], 0)
                 distance = math.sqrt(dx*dx + dy*dy + dz*dz)
+                
             elif obs['shape'] == 'cylinder':
-                horizontal_dist = math.sqrt((uav_pos[0]-obs_pos[0])**2 + (uav_pos[1]-obs_pos[1])**2)
+                # Cylinder collision: check horizontal distance to cylinder edge and vertical bounds
+                horizontal_dist = math.sqrt((uav_pos[0] - obs_pos[0])**2 + (uav_pos[1] - obs_pos[1])**2)
                 vertical_dist = abs(uav_pos[2] - obs_pos[2])
-                distance = max(horizontal_dist - obs['size'][0], vertical_dist - obs['size'][1])
+                
+                # Check if UAV is within cylinder height bounds
+                if vertical_dist <= obs['size'][1]:  # Within cylinder height
+                    # Distance is horizontal distance to cylinder surface
+                    distance = max(0, horizontal_dist - obs['size'][0])
+                else:
+                    # Outside cylinder height - calculate 3D distance to cylinder edge
+                    distance = math.sqrt(
+                        max(0, horizontal_dist - obs['size'][0])**2 + 
+                        max(0, vertical_dist - obs['size'][1])**2
+                    )
             
-            if distance < collision_threshold:
+            else:  # sphere or other shapes
+                # Simple spherical collision
+                distance = np.linalg.norm(uav_pos - obs_pos) - obs['size'][0]
+            
+            # Check collision with safety threshold
+            if distance <= collision_threshold:
+                print(f"🚨 COLLISION DETECTED! UAV at {uav_pos} within {distance:.3f}m of {obs['shape']} obstacle at {obs_pos} (threshold: {collision_threshold:.3f}m)")
                 return True
+        
         return False
 
 if __name__ == '__main__':
