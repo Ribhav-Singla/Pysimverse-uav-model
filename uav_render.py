@@ -439,7 +439,7 @@ ppo_agent = PPOAgent(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs
 # Load the trained model
 try:
     # Load the single weight file
-    model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights_lambda_1_0.pth" 
+    model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights_lambda_0_0.pth" 
     
     if os.path.exists(model_path):
         ppo_agent.load(model_path)
