@@ -28,8 +28,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train UAV with RDR system')
     parser.add_argument('--lambda', dest='ns_lambda', type=float, default=1.0,
                         help='Neurosymbolic lambda value (0=pure RL, 1=RDR when available) (default: 1.0)')
-    parser.add_argument('--episodes', type=int, default=20,
-                        help='Episodes per curriculum level (default: 10)')
+    parser.add_argument('--episodes', type=int, default=50,
+                        help='Episodes per curriculum level (default: 50)')
     args = parser.parse_args()
     
     ############## Hyperparameters ##############
@@ -56,8 +56,8 @@ def main():
     eps_clip = 0.1              # clip parameter for PPO (reduced for finer control)
     gamma = 0.999               # increased for longer-term planning
 
-    lr_actor = 0.0001           # learning rate for actor (will decay adaptively)
-    lr_critic = 0.0004          # learning rate for critic (will decay adaptively)
+    lr_actor = 0.00005          # learning rate for actor (reduced for stability)
+    lr_critic = 0.0002          # learning rate for critic (reduced for stability)
 
     random_seed = 0
     #############################################
@@ -146,26 +146,21 @@ def main():
 
         plt.figure(figsize=(10, 6))
         plt.subplot(2, 1, 1)
-        plt.plot(episode_indices, rewards_np, color='lightgray', label='Reward')
-        plt.plot(x_roll, roll_rewards, color='blue', label='Reward EMA')
+        plt.scatter(episode_indices, rewards_np, color='lightgray', alpha=0.6, s=8, label='Reward')
+        plt.plot(x_roll, roll_rewards, color='blue', linewidth=2, label='Reward EMA')
         plt.xlabel('Episode')
         plt.ylabel('Reward')
         plt.title('Episode Reward')
         
-        # Use reasonable range based on actual data
-        if len(rewards_np) > 0:
-            reward_min = max(-200, np.percentile(rewards_np, 5))  # 5th percentile, but not below -200
-            reward_max = min(200, np.percentile(rewards_np, 95))   # 95th percentile, but not above 200
-            plt.ylim(reward_min, reward_max)
-        else:
-            plt.ylim(-200, 200)
+        # Fixed y-axis range for consistent reward visualization
+        plt.ylim(-1000, 200)
         
         plt.legend(loc='best')
         plt.grid(True, alpha=0.3)
 
         plt.subplot(2, 1, 2)
-        plt.plot(episode_indices, success_np, '.', color='lightgray', label='Success (0/1)')
-        plt.plot(x_roll, roll_success, color='green', label='Success Rate EMA')
+        plt.scatter(episode_indices, success_np, color='lightgray', alpha=0.6, s=8, label='Success (0/1)')
+        plt.plot(x_roll, roll_success, color='green', linewidth=2, label='Success Rate EMA')
         plt.xlabel('Episode')
         plt.ylabel('Success')
         plt.title('Goal Reached')
@@ -396,7 +391,16 @@ def main():
 
             # update if its time
             if time_step % update_timestep == 0:
+                # Check for NaN weights before update
+                if ppo_agent.policy.check_and_fix_network_weights():
+                    print("🔧 Network weights were reset due to NaN detection.")
+                
                 ppo_agent.update(memory)
+                
+                # Check for NaN weights after update
+                if ppo_agent.policy.check_and_fix_network_weights():
+                    print("🔧 Network weights were reset after PPO update.")
+                
                 memory.clear_memory()
                 time_step = 0
             episode_reward += reward
@@ -464,18 +468,19 @@ def main():
         success_flag = 1 if term_reason in ['goal_reached', 'goal_reached_and_stabilized'] else 0
         episode_success_list.append(success_flag)
 
-        # Save model when goal is reached (but continue training)
+        # Save model after every episode
+        ppo_agent.save(os.path.join(checkpoint_path, weights_filename))
+        print(f"💾 Model saved after episode {i_episode} (Reward: {episode_reward:.1f})")
+
+        # Track goal achievement (but model already saved per episode)
         if episode_reward > solved_reward:
             print("########## Goal Reached! ##########")
             print(f"Excellent performance with reward: {episode_reward:.1f}")
             print(f"Episode length: {episode_length} steps")
-            # Save the model but continue training
-            ppo_agent.save(os.path.join(checkpoint_path, weights_filename))
-            print(f"Model saved to {os.path.join(checkpoint_path, weights_filename)}")
             print("🔄 Continuing training for more robustness...")
             print("-" * 50)
         
-        # Track success rate for monitoring (but continue training)
+        # Track success rate for monitoring (but model already saved per episode)
         if len(success_window) >= 100:
             success_rate = sum(success_window) / len(success_window)
             if success_rate >= early_stop_threshold and i_episode % 100 == 0:
@@ -484,9 +489,7 @@ def main():
                 print(f"   Episode: {i_episode}/{max_episodes}")
                 print(f"   Success threshold: {early_stop_threshold*100:.0f}%")
                 print(f"{'='*60}")
-                # Update the main model but continue training
-                ppo_agent.save(os.path.join(checkpoint_path, weights_filename))
-                print(f"✅ Model updated! Continuing training for more robustness...")
+                print(f"✅ Model already saved per episode! Continuing training for more robustness...")
                 print("-" * 60)
 
         # Print current episode stats (simplified for non-termination cases)
@@ -500,11 +503,8 @@ def main():
                     i_episode, episode_length, episode_reward,
                     CONFIG['start_pos'][0], CONFIG['start_pos'][1], CONFIG['goal_pos'][0], CONFIG['goal_pos'][1]))
         
-        # Save model periodically and track best performance
+        # Print periodic training progress summary (model already saved per episode)
         if i_episode % log_interval == 0:
-            # Always update the same weights file with the latest model
-            ppo_agent.save(os.path.join(checkpoint_path, weights_filename))
-            
             # Print training progress summary
             print(f"\n=== Training Progress Summary (Episode {i_episode}) ===")
             if curriculum_learning:
@@ -536,12 +536,12 @@ def main():
             if boundary_violations:
                 print(f"🧭 Boundary Issue: {'Western' if termination_info.get('final_position', [0])[0] < -3.9 else 'Other'} boundary")
                     
-            # Only print "New best" message if there's improvement
+            # Track best performance (model already saved per episode)
             if episode_reward > best_reward:
                 best_reward = episode_reward
-                print(f"✓ New best model saved with reward: {episode_reward:.1f}")
+                print(f"✓ New best performance achieved with reward: {episode_reward:.1f}")
             else:
-                print(f"📝 Model updated (best: {best_reward:.1f})")
+                print(f"📝 Current best: {best_reward:.1f}")
             print("=" * 50)
 
             # Save metrics plot periodically

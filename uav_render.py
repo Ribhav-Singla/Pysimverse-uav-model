@@ -21,7 +21,7 @@ CONFIG = {
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,
-    'static_obstacles': 9,
+    'static_obstacles': 4,
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
@@ -29,7 +29,7 @@ CONFIG = {
     'boundary_penalty': -100,
     'lidar_range': 2.9,
     'lidar_num_rays': 16,
-    'step_reward': -0.01,
+    'step_reward': -0.1,
     
     # Render-specific parameters (do not affect agent logic)
     'kp_pos': 1.5,
@@ -343,9 +343,11 @@ import os
 
 # ... (CONFIG and EnvironmentGenerator class)
 
-# Generate obstacles first so we can check positions against them
-print("🏗️ Generating complex environment with static obstacles...")
-obstacles = EnvironmentGenerator.generate_obstacles()
+# Initialize UAV environment first to use its exact methods
+print("🏗️ Initializing UAV environment for rendering...")
+env = UAVEnv()
+print("🏗️ Generating obstacles using training environment methods...")
+obstacles = env.obstacles  # Use the same obstacles as the training environment
 
 # Helper function to ensure positions are safe from obstacles
 def check_position_safety(position, obstacles, safety_radius=0.5):
@@ -393,56 +395,16 @@ def check_position_safety(position, obstacles, safety_radius=0.5):
 
 # Set up safe start and goal positions
 max_attempts = 50
-safety_radius = 0.8  # Keep at least 0.8m from obstacles
+safety_radius = 0.2  # Keep at least 0.2m from obstacles
 
-# Generate dynamic start position from one of the corners
-start_pos_safe = False
-start_safety_check_attempts = 0
+# Use the EXACT same position generation as training environment
+print("🏠 Using training environment's start and goal positions...")
+print(f"✅ Start position: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}, {CONFIG['start_pos'][2]:.1f}]")
+print(f"✅ Goal position: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
+start_goal_distance = np.linalg.norm(CONFIG['goal_pos'][:2] - CONFIG['start_pos'][:2])
+print(f"📏 Start-Goal distance: {start_goal_distance:.1f}m")
 
-print("🏠 Generating random start position from corners...")
-while not start_pos_safe and start_safety_check_attempts < max_attempts:
-    start_safety_check_attempts += 1
-    # Get a random corner position
-    CONFIG['start_pos'] = EnvironmentGenerator.get_random_corner_position()
-    
-    # Check if it's safe
-    if check_position_safety(CONFIG['start_pos'], obstacles, safety_radius):
-        start_pos_safe = True
-        print(f"✅ Safe start position set to: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}, {CONFIG['start_pos'][2]:.1f}]")
-        break
-
-if not start_pos_safe:
-    print("⚠️ Warning: Could not find safe start position after multiple attempts!")
-    print("⚠️ Using default corner position [-3, -3, 1]")
-    CONFIG['start_pos'] = np.array([-3.0, -3.0, 1.0])
-
-# Generate dynamic goal position anywhere in the map
-goal_pos_safe = False
-goal_safety_check_attempts = 0
-
-print("🎯 Generating random goal position anywhere in map...")
-while not goal_pos_safe and goal_safety_check_attempts < max_attempts:
-    goal_safety_check_attempts += 1
-    # Get a random goal position anywhere in the map
-    CONFIG['goal_pos'] = EnvironmentGenerator.get_random_goal_position()
-    
-    # Ensure goal is not too close to start position
-    start_goal_distance = np.linalg.norm(CONFIG['goal_pos'][:2] - CONFIG['start_pos'][:2])
-    
-    # Check if it's safe and far enough from start
-    if (check_position_safety(CONFIG['goal_pos'], obstacles, safety_radius) and 
-        start_goal_distance > 2.0):  # At least 2m apart
-        goal_pos_safe = True
-        print(f"✅ Safe goal position set to: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
-        print(f"📏 Start-Goal distance: {start_goal_distance:.1f}m")
-        break
-    
-if not goal_pos_safe:
-    print("⚠️ Warning: Could not find a safe goal position after multiple attempts!")
-    print("⚠️ Goal may be too close to obstacles.")
-    print(f"� Using potentially unsafe goal: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
-
-# Create environment XML with the obstacles
+# Create environment XML using training environment's method
 EnvironmentGenerator.create_xml_with_obstacles(obstacles)
 
 # Load the model and create the simulation data
@@ -460,7 +422,6 @@ print(f"✈️ UAV flight height: {CONFIG['uav_flight_height']}m")
 print(f"🛣️ Green path trail: {CONFIG['path_trail_length']} points")
 
 # Initialize PPO agent with the EXACT same architecture as training
-env = UAVEnv()
 state_dim = env.observation_space.shape[0]  # Will be 36 with our enhanced features
 action_dim = env.action_space.shape[0]
 
@@ -478,7 +439,7 @@ ppo_agent = PPOAgent(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs
 # Load the trained model
 try:
     # Load the single weight file
-    model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights.pth"
+    model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights_lambda_1_0.pth" 
     
     if os.path.exists(model_path):
         ppo_agent.load(model_path)
@@ -561,11 +522,8 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
     mission_complete = False
     collision_occurred = False
     
-    # Goal stabilization variables
+    # Goal tracking variable
     goal_reached = False
-    goal_stabilization_steps = 0
-    goal_hold_duration = 30  # Steps before confirming stabilization (1 second)
-    stay_at_goal_indefinitely = True  # Keep UAV at goal after reaching it
     
     try:
         while viewer.is_running() and not mission_complete and not collision_occurred:
@@ -573,13 +531,15 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             current_pos = data.qpos[:3].copy()
             current_vel = data.qvel[:3].copy()
             
-            # Create observation for PPO agent - IDENTICAL to training environment
-            goal_dist = CONFIG['goal_pos'] - current_pos
-            lidar_readings = get_lidar_readings(current_pos, obstacles)
+            # Create observation EXACTLY as in training environment
+            pos = current_pos
+            vel = current_vel
+            goal_dist = CONFIG['goal_pos'] - pos
             
-            # === LIDAR FEATURE ENGINEERING ===
-            # EXACTLY MATCHING the processing in uav_env.py _get_obs()
+            # Use the EXACT same LIDAR function as training
+            lidar_readings = env._get_lidar_readings(pos)
             
+            # === EXACT LIDAR FEATURE ENGINEERING from uav_env.py ===
             # 1. Minimum distance (closest obstacle)
             min_lidar = np.min(lidar_readings)
             
@@ -621,9 +581,8 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 goal_direction_norm[1]        # 1D
             ])
             
-            # Create exact 36-dimensional state vector as defined in uav_env.py
-            # 3 (pos) + 3 (vel) + 3 (goal) + 16 (lidar) + 11 (lidar features) = 36 dimensions
-            state = np.concatenate([current_pos, current_vel, goal_dist, lidar_readings, lidar_features])
+            # Create EXACT state vector as training environment
+            state = np.concatenate([pos, vel, goal_dist, lidar_readings, lidar_features])
             
             # Convert to torch tensor
             state_tensor = torch.FloatTensor(state.reshape(1, -1))
@@ -631,99 +590,124 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # Agent selects action
             raw_action, _ = ppo_agent.select_action(state_tensor)
             action = raw_action.flatten() # Ensure action is a 1D array
-
-            # --- Height Control ---
-            # The agent controls X and Y velocity, but we override Z for stable height.
-            current_height = data.qpos[2]
-            desired_height = CONFIG['uav_flight_height']
             
-            # Simple P-controller to maintain height
-            height_error = desired_height - current_height
-            vz_correction = CONFIG['kp_pos'] * height_error
+            # Ensure action is within expected bounds [-1, 1] (same as training)
+            action = np.clip(action, -1.0, 1.0)
             
-            # Check if UAV is at goal position BEFORE applying velocity
+            # Calculate goal distance first
             goal_distance = np.linalg.norm(current_pos - CONFIG['goal_pos'])
             
-            # GOAL STABILIZATION: If UAV reaches goal, apply strong braking to keep it there
-            if goal_distance < 0.5:  # Same threshold as training environment
-                if not goal_reached:
-                    print(f"\n🎯 GOAL REACHED! Stabilizing UAV at goal position...")
-                    goal_reached = True
-                    goal_stabilization_steps = 0
+            # Debug: Print action values occasionally
+            if step_count % 100 == 0:
+                print(f"🎮 Action: [{action[0]:.3f}, {action[1]:.3f}] | "
+                      f"Pos: ({current_pos[0]:.2f}, {current_pos[1]:.2f}) | "
+                      f"Goal dist: {goal_distance:.2f}m")
+
+            # Apply RDR Clear Path Rule with velocity clamping
+            target_vel = action[:2]  # Desired velocity from action
+            
+            # Check boundary distance for R2 rule
+            half_world = CONFIG['world_size'] / 2
+            distances_to_boundaries = np.array([
+                half_world + current_pos[0],  # Distance to west boundary
+                half_world - current_pos[0],  # Distance to east boundary
+                half_world + current_pos[1],  # Distance to south boundary
+                half_world - current_pos[1]   # Distance to north boundary
+            ])
+            distance_to_boundary = float(np.min(distances_to_boundaries))
+            
+            # Check if clear path to goal (simple line-of-sight)
+            has_clear_path = env.has_line_of_sight_to_goal() if hasattr(env, 'has_line_of_sight_to_goal') else False
+            
+            # RDR Rule R2: Boundary Safety (higher priority than clear path)
+            if distance_to_boundary < 0.8:
+                # Apply boundary safety rule: vel = max(0.5, vel - 0.25)
+                boundary_escape_dir = np.zeros(2)
                 
-                # Apply VERY strong braking forces to LOCK UAV at goal
-                goal_vector = CONFIG['goal_pos'] - current_pos
-                
-                # Check if we're very close to goal center (within 0.1m)
-                if goal_distance < 0.1:
-                    # LOCK MODE: Virtually stop all movement
-                    # Apply extremely strong velocity damping (99% reduction)
-                    stabilization_vel = -data.qvel[:2] * 0.99
+                # Calculate direction away from nearest boundary
+                if current_pos[0] > half_world - 0.8:  # Close to east boundary
+                    boundary_escape_dir[0] = -1.0  # Move west
+                elif current_pos[0] < -(half_world - 0.8):  # Close to west boundary
+                    boundary_escape_dir[0] = 1.0   # Move east
                     
-                    # Add tiny position correction to keep centered
-                    stabilization_vel += goal_vector[:2] * 5.0
+                if current_pos[1] > half_world - 0.8:  # Close to north boundary
+                    boundary_escape_dir[1] = -1.0  # Move south
+                elif current_pos[1] < -(half_world - 0.8):  # Close to south boundary
+                    boundary_escape_dir[1] = 1.0   # Move north
+                
+                # Normalize escape direction
+                if np.linalg.norm(boundary_escape_dir) > 0:
+                    boundary_escape_dir = boundary_escape_dir / np.linalg.norm(boundary_escape_dir)
+                
+                # Apply velocity reduction: vel = max(0.5, vel - 0.25)
+                reduced_vel = target_vel - 0.25 * boundary_escape_dir
+                
+                # Ensure minimum speed of 0.5
+                current_speed = np.linalg.norm(reduced_vel)
+                if current_speed < 0.5 and current_speed > 0:
+                    reduced_vel = (reduced_vel / current_speed) * 0.5
+                elif current_speed == 0:
+                    # If stopped, move away from boundary at min speed
+                    reduced_vel = boundary_escape_dir * 0.5
+                    
+                target_vel = reduced_vel
+                
+                # Debug print for boundary safety activation
+                if step_count % 30 == 0:
+                    print(f"⚠️ RDR Boundary Safety Active | Distance: {distance_to_boundary:.2f}m | Escape vel: {np.linalg.norm(target_vel):.3f}")
+                    
+            elif has_clear_path and goal_distance > 0.5:
+                # RDR Rule R1: Clear path - increase velocity toward goal
+                goal_direction = (CONFIG['goal_pos'][:2] - current_pos[:2]) / (goal_distance + 1e-8)
+                
+                # Apply velocity boost: vel = max(1, vel + 0.2) as requested
+                boosted_vel = target_vel + 0.2 * goal_direction
+                
+                # Ensure velocity magnitude doesn't exceed maximum of 1.0
+                vel_magnitude = np.linalg.norm(boosted_vel)
+                if vel_magnitude > 1.0:
+                    target_vel = boosted_vel / vel_magnitude  # Normalize to unit magnitude
                 else:
-                    # APPROACH MODE: Strong position correction with damping
-                    position_correction = goal_vector[:2] * 3.0  # Very strong pull toward goal
+                    target_vel = boosted_vel
                     
-                    # Strong velocity damping to eliminate momentum
-                    velocity_damping = -data.qvel[:2] * 0.9  # Reduce current velocity by 90%
-                    
-                    # Combine corrections with priority on stopping motion
-                    stabilization_vel = position_correction + velocity_damping
-                
-                # Limit stabilization velocity to prevent overshooting
-                stabilization_speed = np.linalg.norm(stabilization_vel)
-                max_stabilization_speed = 0.2 if goal_distance < 0.1 else 0.4
-                if stabilization_speed > max_stabilization_speed:
-                    stabilization_vel = (stabilization_vel / stabilization_speed) * max_stabilization_speed
-                
-                # Apply stabilization velocity instead of action-based velocity
-                data.qvel[0] = float(stabilization_vel[0])
-                data.qvel[1] = float(stabilization_vel[1])
-                data.qvel[2] = vz_correction  # Height controller still manages Z-velocity
-                
-                goal_stabilization_steps += 1
-                
-                # Print stabilization confirmation (only once after sufficient steps)
-                if goal_stabilization_steps == goal_hold_duration:
-                    print(f"\n✅ GOAL SUCCESSFULLY REACHED AND STABILIZED!")
-                    print(f"📍 UAV position: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
-                    print(f"📍 Goal position: ({CONFIG['goal_pos'][0]:.2f}, {CONFIG['goal_pos'][1]:.2f}, {CONFIG['goal_pos'][2]:.2f})")
-                    print(f"📏 Distance to goal: {goal_distance:.3f}m")
-                    print(f"🔒 UAV is now LOCKED at goal position")
-                    print(f"🏆 MISSION COMPLETE! (Press ESC or close window to exit)")
-                
-                # Optional: Allow mission to complete but don't set flag if we want to stay indefinitely
-                # Keep UAV at goal instead of ending simulation
-                # mission_complete = stay_at_goal_indefinitely is False
-                    
-            else:
-                # Normal velocity control when not at goal
-                data.qvel[0] = action[0]      # Agent controls X-velocity
-                data.qvel[1] = action[1]      # Agent controls Y-velocity
-                data.qvel[2] = vz_correction  # Height controller manages Z-velocity
-                
-                # Reset goal status if UAV moves too far from goal during stabilization
-                if goal_reached and goal_distance > 1.0:
-                    goal_reached = False
-                    goal_stabilization_steps = 0
-                    print(f"\n⚠️ UAV left goal area during stabilization. Resetting...")
+                # Debug print for RDR activation
+                if step_count % 50 == 0:
+                    print(f"🎯 RDR Clear Path Active | Boost: {0.2:.1f} | Final vel mag: {np.linalg.norm(target_vel):.3f}")
+            
+            # Ensure velocity is strictly within [-1, 1] bounds
+            target_vel = np.clip(target_vel, -1.0, 1.0)
+            
+            # Apply velocity to simulation
+            data.qvel[0] = float(target_vel[0])  # X velocity  
+            data.qvel[1] = float(target_vel[1])  # Y velocity
+            data.qvel[2] = 0.0                   # Z velocity = 0 (no vertical movement)
+            
+            # Maintain constant height
+            data.qpos[2] = CONFIG['uav_flight_height']
+            
+            # Check if goal reached for logging
+            if goal_distance < 0.5 and not goal_reached:
+                print(f"\n🎯 GOAL REACHED! Distance: {goal_distance:.3f}m")
+                goal_reached = True
             
             # Step the simulation
             mujoco.mj_step(model, data)
-
-            # Enforce velocity constraints (match training velocity limits)
-            vel = data.qvel[:3]
-            speed = np.linalg.norm(vel)
-            # Using the same velocity limits as in the velocity curriculum
-            min_vel = 0.1
-            max_vel = 1.0  # Medium velocity for demonstration
             
-            if speed < min_vel and speed > 0:
-                data.qvel[:3] = (vel / speed) * min_vel if speed > 0 else np.zeros(3)
-            elif speed > max_vel:
-                data.qvel[:3] = (vel / speed) * max_vel
+            # Post-step velocity monitoring and STRICT safety clamping
+            current_vel_magnitude = np.linalg.norm(data.qvel[:2])
+            
+            # STRICT velocity enforcement - NEVER allow velocity > 1.0
+            if current_vel_magnitude > 1.0:
+                # Emergency velocity clamping if simulation causes velocity escalation
+                data.qvel[0] = np.clip(data.qvel[0], -1.0, 1.0)
+                data.qvel[1] = np.clip(data.qvel[1], -1.0, 1.0)
+                
+                if step_count % 10 == 0:  # More frequent reporting
+                    print(f"🚨 STRICT velocity clamp! Mag: {current_vel_magnitude:.3f} → {np.linalg.norm(data.qvel[:2]):.3f}")
+            
+            # Double-check: Absolute hard limit enforcement
+            data.qvel[0] = max(-1.0, min(1.0, data.qvel[0]))
+            data.qvel[1] = max(-1.0, min(1.0, data.qvel[1]))
             
             # Update path trail visualization
             if step_count % 5 == 0:
@@ -735,15 +719,42 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
             # Forward model to update rendering
             viewer.sync()
             
-            # Check for boundary violation
+            # HARD boundary enforcement - immediately stop UAV if at boundary
             half_world = CONFIG['world_size'] / 2
+            boundary_margin = 0.1  # 10cm from actual boundary
+            
+            if (abs(current_pos[0]) > half_world - boundary_margin or 
+                abs(current_pos[1]) > half_world - boundary_margin):
+                # Stop UAV immediately and pull back from boundary
+                data.qvel[0] = 0.0
+                data.qvel[1] = 0.0
+                
+                # Pull UAV back to safe zone
+                if current_pos[0] > half_world - boundary_margin:
+                    data.qpos[0] = half_world - boundary_margin
+                elif current_pos[0] < -(half_world - boundary_margin):
+                    data.qpos[0] = -(half_world - boundary_margin)
+                    
+                if current_pos[1] > half_world - boundary_margin:
+                    data.qpos[1] = half_world - boundary_margin  
+                elif current_pos[1] < -(half_world - boundary_margin):
+                    data.qpos[1] = -(half_world - boundary_margin)
+                
+                print(f"\n🛑 HARD BOUNDARY HIT - UAV STOPPED!")
+                print(f"📍 Position corrected to: ({data.qpos[0]:.2f}, {data.qpos[1]:.2f}, {data.qpos[2]:.2f})")
+            
+            # Check for complete boundary violation (simulation failure)
             if (abs(current_pos[0]) > half_world or abs(current_pos[1]) > half_world or 
                 current_pos[2] < 0.1 or current_pos[2] > 5.0):
                 collision_occurred = True
-                print(f"\n🚨 BOUNDARY VIOLATION DETECTED!")
+                final_vel_magnitude = np.linalg.norm(data.qvel[:2])
+                print(f"\n🚨 COMPLETE BOUNDARY VIOLATION!")
                 print(f"📍 UAV position: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
-                print(f"🚫 UAV flew outside simulation boundaries!")
-                print(f"⚠️ MISSION FAILED!")
+                print(f"🏃 Final velocity: ({data.qvel[0]:.3f}, {data.qvel[1]:.3f}) | Magnitude: {final_vel_magnitude:.3f}")
+                print(f"🎯 Goal distance: {goal_distance:.2f}m")
+                print(f"📊 Episode length: {step_count} steps")
+                print(f"🚫 UAV went out of bounds!")
+                print(f"⚠️ MISSION FAILED - RESTARTING SIMULATION!")
                 break
             
             # Check for collision

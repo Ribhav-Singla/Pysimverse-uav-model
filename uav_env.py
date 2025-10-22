@@ -22,6 +22,7 @@ CONFIG = {
     'collision_distance': 0.1,
     'control_dt': 0.05,
     'max_steps': 20000,  # Max steps per episode
+    'step_reward': -0.1,  # Living penalty per step
     'lidar_range': 2.9,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
 }
@@ -95,17 +96,17 @@ class RDRRuleSystem:
         self.default_rule.add_exception(rule_clear_path)
         self.all_rules["R1_CLEAR_PATH"] = rule_clear_path
         
-        # Rule 2: Very close to obstacles or boundaries - decrease velocity
-        rule_danger_zone = RDRRule(
-            rule_id="R2_DANGER_ZONE",
-            condition=self._condition_very_close_danger,
-            conclusion="Very close to obstacles/boundaries: Slow down",
-            action_params={"speed_modifier": -0.2, "direction": "goal"}
+        # Rule 2: Boundary safety - reduce velocity when close to boundaries
+        rule_boundary_safety = RDRRule(
+            rule_id="R2_BOUNDARY_SAFETY",
+            condition=self._condition_near_boundary,
+            conclusion="Near boundary: Reduce velocity for safety",
+            action_params={"speed_modifier": -0.25, "direction": "boundary_safe", "min_speed": 0.5}
         )
-        self.default_rule.add_exception(rule_danger_zone)
-        self.all_rules["R2_DANGER_ZONE"] = rule_danger_zone
+        self.default_rule.add_exception(rule_boundary_safety)
+        self.all_rules["R2_BOUNDARY_SAFETY"] = rule_boundary_safety
         
-        print(f"🔧 Simplified RDR System Initialized with {len(self.all_rules)} rules")
+        print(f"🔧 Enhanced RDR System Initialized with {len(self.all_rules)} rules (Default + Clear Path + Boundary Safety)")
     
     # =====================
     # Condition Functions (Simplified)
@@ -115,13 +116,12 @@ class RDRRuleSystem:
         """Rule 1: Clear path to goal - check if line of sight is clear"""
         return ctx.get('has_los_to_goal', False)
     
-    def _condition_very_close_danger(self, ctx: Dict[str, Any]) -> bool:
-        """Rule 2: Very close to obstacles or boundaries - immediate danger"""
-        min_obstacle_dist = ctx.get('min_obstacle_dist', float('inf'))
+    def _condition_near_boundary(self, ctx: Dict[str, Any]) -> bool:
+        """Rule 2: Boundary safety - check if UAV is close to boundaries"""
         distance_to_boundary = ctx.get('distance_to_boundary', float('inf'))
+        return distance_to_boundary < 0.8  # Within 0.8m of boundary
+    
 
-        # Very close to obstacles (less than 0.8m) OR very close to boundary (less than 1.0m)
-        return (min_obstacle_dist < 0.8 or distance_to_boundary < 1.0)
     
     def evaluate_rules(self, context: Dict[str, Any]) -> RDRRule:
         """Evaluate the rule hierarchy and return the most specific applicable rule"""
@@ -129,10 +129,10 @@ class RDRRuleSystem:
     
     def has_specific_rule(self, context: Dict[str, Any]) -> bool:
         """Check if any specific (non-default) rule applies to the context"""
-        # Check the 2 simplified specific rules (not the default rule R0)
+        # Check both clear path and boundary safety rules (not the default rule R0)
         specific_rules = [
             "R1_CLEAR_PATH",
-            "R2_DANGER_ZONE"
+            "R2_BOUNDARY_SAFETY"
         ]
         
         # Check if any specific rule condition is met
@@ -471,8 +471,11 @@ class UAVEnv(gym.Env):
             # Allow full signed directions [-1, 1] in both neurosymbolic and baseline modes
             action[:2] = (1 - bias_strength * 0.5) * action[:2] + (bias_strength * 0.5) * goal_direction[:2]
         
-        # Direct velocity control - no constraints, full [-1, 1] range
+        # Direct velocity control with STRICT clamping
         target_vel = action[:2]  # Desired velocity from action
+        
+        # Pre-application clamping
+        target_vel = np.clip(target_vel, -1.0, 1.0)
         
         # Simple velocity control - direct action mapping
         self.data.qvel[0] = float(target_vel[0])  # X velocity  
@@ -483,9 +486,20 @@ class UAVEnv(gym.Env):
         self.data.qpos[2] = CONFIG['uav_flight_height']
         
         mujoco.mj_step(self.model, self.data)
+        
+        # POST-STEP STRICT VELOCITY ENFORCEMENT - Critical for preventing escalation
+        self.data.qvel[0] = np.clip(self.data.qvel[0], -1.0, 1.0)
+        self.data.qvel[1] = np.clip(self.data.qvel[1], -1.0, 1.0)
+        self.data.qvel[2] = 0.0  # Always enforce Z velocity = 0
+        
         self.step_count += 1
 
-        # No velocity constraints - allow full [-1, 1] range
+        # STRICT velocity bounds enforcement - NEVER allow velocity > 1.0
+        current_vel_magnitude = np.linalg.norm(self.data.qvel[:2])
+        if current_vel_magnitude > 1.0:
+            # Emergency normalization if physics causes escalation
+            self.data.qvel[0] = self.data.qvel[0] / current_vel_magnitude
+            self.data.qvel[1] = self.data.qvel[1] / current_vel_magnitude
         
         # Always ensure Z position stays constant
         self.data.qpos[2] = CONFIG['uav_flight_height']
@@ -523,8 +537,22 @@ class UAVEnv(gym.Env):
         self.step_count = 0
         self._episode_timestep = 0
         
-        # Set dynamic goal position (randomly select from three available corners)
-        CONFIG['goal_pos'] = self._get_random_goal_position()
+        # Regenerate obstacles first (before setting positions)
+        if self.curriculum_learning:
+            self.load_curriculum_map()
+        else:
+            self.obstacles = EnvironmentGenerator.generate_obstacles()
+            # Set dynamic goal position (randomly select from three available corners)
+            CONFIG['goal_pos'] = self._get_random_goal_position()
+            # Ensure start position is safe from obstacles
+            self._ensure_safe_start_position()
+            EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+        
+        # Verify start and goal positions are not too close (safety check)
+        start_goal_distance = np.linalg.norm(CONFIG['start_pos'][:2] - CONFIG['goal_pos'][:2])
+        if start_goal_distance < 1.0:
+            print(f"⚠️ Warning: Start-goal distance only {start_goal_distance:.2f}m - adjusting goal position")
+            CONFIG['goal_pos'] = self._get_random_goal_position()
         
         # Reset UAV position and state with constant height
         self.data.qpos[:3] = CONFIG['start_pos']
@@ -549,13 +577,7 @@ class UAVEnv(gym.Env):
         # Reset RDR tracking
         self.current_rule = None
         
-        # Regenerate obstacles for each episode
-        if self.curriculum_learning:
-            self.load_curriculum_map()
-        else:
-            self.obstacles = EnvironmentGenerator.generate_obstacles()
-            EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
-        
+        # Reload model (obstacles already generated above)
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
         
@@ -574,6 +596,29 @@ class UAVEnv(gym.Env):
         self.prev_goal_dist = np.linalg.norm(CONFIG['goal_pos'] - self.data.qpos[:3])
         
         return self._get_obs(), {}
+
+    def _ensure_safe_start_position(self):
+        """Ensure start position is safe from obstacles and goal"""
+        max_attempts = 50
+        safety_radius = 0.8  # Keep at least 0.8m from obstacles
+        
+        for attempt in range(max_attempts):
+            # Get a random corner position
+            candidate_start = EnvironmentGenerator.get_random_corner_position()
+            
+            # Check if position is safe from obstacles
+            if EnvironmentGenerator.check_position_safety(candidate_start, self.obstacles, safety_radius):
+                # Check minimum distance from goal (at least 2m apart)
+                goal_distance = np.linalg.norm(candidate_start[:2] - CONFIG['goal_pos'][:2])
+                if goal_distance > 2.0:
+                    CONFIG['start_pos'] = candidate_start
+                    print(f"✅ Safe start position: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}] (attempt {attempt+1})")
+                    return
+        
+        # If no safe position found, use default corner and warn
+        print("⚠️ Warning: Could not find safe start position after 50 attempts!")
+        print("⚠️ Using default corner position [-3, -3, 1] - may be unsafe")
+        CONFIG['start_pos'] = np.array([-3.0, -3.0, 1.0])
 
     # =====================
     # Neurosymbolic helpers
@@ -658,6 +703,7 @@ class UAVEnv(gym.Env):
         distance_to_boundary = float(np.min(distances_to_boundaries))
         
         return {
+            'position': pos,
             'goal_vector': goal_vector,
             'has_los_to_goal': self.has_line_of_sight_to_goal(),
             'min_obstacle_dist': min_obstacle_dist,
@@ -684,9 +730,44 @@ class UAVEnv(gym.Env):
             # Clear path: Increase velocity toward goal
             modified_vel = current_vel + speed_modifier * goal_direction
             
-        elif rule.rule_id == "R2_DANGER_ZONE":
-            # Danger zone: Decrease velocity
-            modified_vel = current_vel - speed_modifier * goal_direction
+        elif rule.rule_id == "R2_BOUNDARY_SAFETY":
+            # Boundary safety: Reduce velocity with minimum threshold
+            min_speed = rule.action_params.get('min_speed', 0.5)
+            
+            # Get direction away from nearest boundary
+            pos = context['position'][:2]  # X,Y position
+            half_world = CONFIG['world_size'] / 2
+            
+            # Calculate direction away from the closest boundary
+            boundary_escape_dir = np.zeros(2)
+            
+            # Check each boundary and create escape vector
+            if pos[0] > half_world - 0.8:  # Close to east boundary
+                boundary_escape_dir[0] = -1.0  # Move west
+            elif pos[0] < -(half_world - 0.8):  # Close to west boundary
+                boundary_escape_dir[0] = 1.0   # Move east
+                
+            if pos[1] > half_world - 0.8:  # Close to north boundary
+                boundary_escape_dir[1] = -1.0  # Move south
+            elif pos[1] < -(half_world - 0.8):  # Close to south boundary
+                boundary_escape_dir[1] = 1.0   # Move north
+            
+            # Normalize escape direction
+            if np.linalg.norm(boundary_escape_dir) > 0:
+                boundary_escape_dir = boundary_escape_dir / np.linalg.norm(boundary_escape_dir)
+            
+            # Apply velocity reduction: vel = max(min_speed, vel - 0.25)
+            reduced_vel = current_vel + speed_modifier * boundary_escape_dir  # speed_modifier is -0.25
+            
+            # Ensure minimum speed constraint
+            current_speed = np.linalg.norm(reduced_vel)
+            if current_speed < min_speed and current_speed > 0:
+                reduced_vel = (reduced_vel / current_speed) * min_speed
+            elif current_speed == 0:
+                # If completely stopped, move away from boundary at min speed
+                reduced_vel = boundary_escape_dir * min_speed
+                
+            modified_vel = reduced_vel
             
         
         # Clip velocity components to [-1, 1] range
@@ -736,19 +817,33 @@ class UAVEnv(gym.Env):
             self.viewer.close()
     
     def _get_random_goal_position(self):
-        """Select a random goal position from the three available corners (excluding start position)"""
-        # Define the four corners of the world with LARGER SAFETY MARGIN
+        """Select a safe random goal position, preferring corners but falling back to anywhere if needed"""
+        # First try corner positions (traditional approach)
         half_world = CONFIG['world_size'] / 2
-        safety_margin = 1.0  # INCREASED: Keep 1.0m away from boundary
+        safety_margin = 1.0  # Keep 1.0m away from boundary
         
         corners = [
             np.array([half_world - safety_margin, half_world - safety_margin, CONFIG['uav_flight_height']]),    # Top-right [3, 3]
             np.array([half_world - safety_margin, -half_world + safety_margin, CONFIG['uav_flight_height']]),   # Bottom-right [3, -3]
             np.array([-half_world + safety_margin, half_world - safety_margin, CONFIG['uav_flight_height']])    # Top-left [-3, 3]
         ]
-        # Start position is bottom-left: [-3, -3, 1.0]
-        # So we exclude it and randomly select from the other three corners
-        return random.choice(corners)
+        
+        # Try each corner randomly until we find a safe one
+        random.shuffle(corners)
+        for corner in corners:
+            if hasattr(self, 'obstacles') and EnvironmentGenerator.check_position_safety(corner, self.obstacles, 0.8):
+                return corner
+        
+        # If no corner is safe, try random positions anywhere in the map
+        for attempt in range(30):
+            candidate_goal = EnvironmentGenerator.get_random_goal_position()
+            if hasattr(self, 'obstacles') and EnvironmentGenerator.check_position_safety(candidate_goal, self.obstacles, 0.8):
+                print(f"✅ Safe goal position (non-corner): [{candidate_goal[0]:.1f}, {candidate_goal[1]:.1f}]")
+                return candidate_goal
+        
+        # Fallback to a corner (may be unsafe but training will continue)
+        print("⚠️ Warning: Could not find safe goal position, using corner fallback")
+        return corners[0]
     
     def init_csv_logging(self):
         """Initialize CSV file for obstacle detection logging"""
@@ -958,7 +1053,21 @@ class UAVEnv(gym.Env):
             goal_direction_norm[1]        # 1D
         ])
         
-        return np.concatenate([pos, vel, goal_dist, lidar_readings, lidar_features])
+        # Combine all observation components
+        obs = np.concatenate([pos, vel, goal_dist, lidar_readings, lidar_features])
+        
+        # NaN protection - critical for preventing training crashes
+        if np.isnan(obs).any():
+            print(f"🚨 WARNING: NaN detected in observation! Replacing with zeros.")
+            print(f"   Position: {pos}")
+            print(f"   Velocity: {vel}")
+            print(f"   Goal distance: {goal_dist}")
+            obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=-1.0)
+        
+        # Ensure all values are finite and within reasonable bounds
+        obs = np.clip(obs, -100.0, 100.0)  # Prevent extreme values
+        
+        return obs
 
     def _get_lidar_readings(self, pos):
         """Generate LIDAR readings in 360 degrees around the UAV (normalized to [0,1])"""
@@ -1138,7 +1247,10 @@ class UAVEnv(gym.Env):
         progress = self.prev_goal_dist - goal_dist
         reward = 10.0 * progress  # Scaled up for significance
         
-        # 2. Collision avoidance rewards (positive for safe navigation)
+        # 2. Step penalty (living penalty to encourage efficiency)
+        reward += CONFIG['step_reward']  # -0.1 per step
+        
+        # 3. Collision avoidance rewards (positive for safe navigation)
         if min_obstacle_dist < 0.3:
             reward -= 5.0  # Danger zone - penalty for being too close
         elif min_obstacle_dist < 0.5:

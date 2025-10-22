@@ -36,28 +36,94 @@ class ActorCritic(nn.Module):
         
         self.action_dim = action_dim
         self.action_var = torch.full((action_dim,), action_std_init * action_std_init)
+        
+        # Initialize network weights to prevent NaN
+        self._initialize_weights()
 
     def set_action_std(self, new_action_std):
         self.action_var = torch.full((self.action_dim,), new_action_std * new_action_std)
+    
+    def _initialize_weights(self):
+        """Initialize network weights to prevent NaN and improve stability"""
+        for module in [self.actor, self.critic]:
+            for layer in module:
+                if isinstance(layer, nn.Linear):
+                    # Xavier/Glorot initialization for better gradient flow
+                    torch.nn.init.xavier_uniform_(layer.weight, gain=0.5)
+                    torch.nn.init.constant_(layer.bias, 0.0)
+                elif isinstance(layer, nn.LayerNorm):
+                    torch.nn.init.constant_(layer.weight, 1.0)
+                    torch.nn.init.constant_(layer.bias, 0.0)
+    
+    def check_and_fix_network_weights(self):
+        """Check for NaN weights and reset them if found"""
+        nan_found = False
+        for name, param in self.named_parameters():
+            if torch.isnan(param).any():
+                print(f"🚨 WARNING: NaN detected in {name}! Resetting weights.")
+                nan_found = True
+        
+        if nan_found:
+            print("🔧 Reinitializing network weights due to NaN detection.")
+            self._initialize_weights()
+            return True
+        return False
 
     def forward(self, state):
         raise NotImplementedError
 
     def act(self, state):
+        # Input validation - check for extreme state values
+        if torch.isnan(state).any() or torch.isinf(state).any():
+            print("🚨 WARNING: Invalid state input detected! Cleaning state values.")
+            state = torch.nan_to_num(state, nan=0.0, posinf=10.0, neginf=-10.0)
+        
+        # Clamp state values to reasonable range to prevent network instability
+        state = torch.clamp(state, -100.0, 100.0)
+        
         action_mean = self.actor(state)
+        
+        # NaN protection for action mean
+        if torch.isnan(action_mean).any():
+            print("🚨 WARNING: NaN detected in action_mean during act()! Replacing with zeros.")
+            action_mean = torch.zeros_like(action_mean)
+        
+        # Clamp action_mean to reasonable bounds
+        action_mean = torch.clamp(action_mean, -10.0, 10.0)
+        
         cov_mat = torch.diag(self.action_var).unsqueeze(dim=0)
         dist = MultivariateNormal(action_mean, cov_mat)
 
         action = dist.sample()
         action_logprob = dist.log_prob(action)
         
+        # NaN protection for action and log probability
+        if torch.isnan(action).any():
+            print("🚨 WARNING: NaN detected in action! Replacing with zeros.")
+            action = torch.zeros_like(action)
+        
+        if torch.isnan(action_logprob).any():
+            print("🚨 WARNING: NaN detected in action_logprob! Replacing with zeros.")
+            action_logprob = torch.zeros_like(action_logprob)
+        
         return action.detach(), action_logprob.detach()
 
     def evaluate(self, state, action):
         action_mean = self.actor(state)
         
+        # NaN protection - check for NaN values in action_mean
+        if torch.isnan(action_mean).any():
+            print("🚨 WARNING: NaN detected in action_mean! Replacing with zeros.")
+            action_mean = torch.zeros_like(action_mean)
+        
         action_var = self.action_var.expand_as(action_mean)
         cov_mat = torch.diag_embed(action_var)
+        
+        # Additional NaN protection for covariance matrix
+        if torch.isnan(cov_mat).any():
+            print("🚨 WARNING: NaN detected in covariance matrix! Resetting to identity.")
+            cov_mat = torch.eye(action_mean.shape[-1]).expand_as(cov_mat)
+        
         dist = MultivariateNormal(action_mean, cov_mat)
         
         action_logprobs = dist.log_prob(action)
@@ -118,9 +184,22 @@ class PPOAgent:
             discounted_reward = reward + (self.gamma * discounted_reward)
             rewards.insert(0, discounted_reward)
         
-        # Normalizing the rewards
+        # Normalizing the rewards with NaN protection
         rewards = torch.tensor(rewards, dtype=torch.float32)
-        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
+        
+        # Check for extreme reward values before normalization
+        if torch.isnan(rewards).any() or torch.isinf(rewards).any():
+            print(f"🚨 WARNING: Invalid rewards detected! NaN: {torch.isnan(rewards).sum()}, Inf: {torch.isinf(rewards).sum()}")
+            rewards = torch.nan_to_num(rewards, nan=0.0, posinf=100.0, neginf=-100.0)
+        
+        # Safe reward normalization with epsilon protection
+        reward_mean = rewards.mean()
+        reward_std = rewards.std()
+        if torch.isnan(reward_mean) or torch.isnan(reward_std) or reward_std < 1e-6:
+            print(f"🚨 WARNING: Invalid reward statistics! Mean: {reward_mean}, Std: {reward_std}")
+            rewards = torch.zeros_like(rewards)  # Reset to zeros if statistics are invalid
+        else:
+            rewards = (rewards - reward_mean) / (reward_std + 1e-7)
 
         # convert list to tensor (using numpy for efficiency)
         old_states = torch.squeeze(torch.tensor(np.array(memory.states), dtype=torch.float32))
@@ -146,9 +225,18 @@ class PPOAgent:
             # final loss of clipped objective PPO
             loss = -torch.min(surr1, surr2) + 0.5*self.MseLoss(state_values, rewards) - 0.01*dist_entropy
             
+            # NaN/Inf protection for loss
+            if torch.isnan(loss).any() or torch.isinf(loss).any():
+                print(f"🚨 WARNING: Invalid loss detected! Skipping this update.")
+                continue
+            
             # take gradient step
             self.optimizer.zero_grad()
             loss.mean().backward()
+            
+            # Gradient clipping to prevent explosion
+            torch.nn.utils.clip_grad_norm_(self.policy.actor.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.policy.critic.parameters(), max_norm=1.0)
             self.optimizer.step()
         
         # ADDED: Step the learning rate scheduler
