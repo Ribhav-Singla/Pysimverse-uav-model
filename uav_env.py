@@ -10,13 +10,23 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Callable
 
 # Configuration from uav_render.py, adapted for the environment
+# Generate random goal position from specific corners
+def _generate_random_corner_goal():
+    """Generate a random goal position from three specific corners"""
+    corners = [
+        np.array([-3.0, 3.0, 1.0]),   # Top-left corner
+        np.array([3.0, -3.0, 1.0]),   # Bottom-right corner  
+        np.array([3.0, 3.0, 1.0])     # Top-right corner
+    ]
+    return random.choice(corners)
+
 CONFIG = {
     'start_pos': np.array([-3.0, -3.0, 1.0]),  # Default start position (will be updated dynamically)
-    'goal_pos': np.array([3.0, 3.0, 1.0]),     # Default goal position (will be updated dynamically)
+    'goal_pos': _generate_random_corner_goal(), # Random corner goal position
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,  # Half of obstacle height
-    'static_obstacles': 4,
+    'static_obstacles': 10,
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
