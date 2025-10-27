@@ -28,8 +28,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train UAV with RDR system')
     parser.add_argument('--lambda', dest='ns_lambda', type=float, default=1.0,
                         help='Neurosymbolic lambda value (0=pure RL, 1=RDR when available) (default: 1.0)')
-    parser.add_argument('--episodes', type=int, default=50,
-                        help='Episodes per curriculum level (default: 50)')
+    parser.add_argument('--episodes', type=int, default=100,
+                        help='Episodes per curriculum level (default: 100)')
     args = parser.parse_args()
     
     ############## Hyperparameters ##############

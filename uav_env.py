@@ -1259,7 +1259,7 @@ class UAVEnv(gym.Env):
             return reward, termination_info
             
         # Simple goal achievement - immediate reward and termination
-        if goal_dist < 0.5:
+        if goal_dist < 0.1:
             reward = 100  # Simple goal reward
             termination_info['terminated'] = True
             termination_info['termination_reason'] = 'goal_reached'
@@ -1373,17 +1373,7 @@ class UAVEnv(gym.Env):
         """Get adaptive collision threshold based on training progress (curriculum)"""
         episode = getattr(self, 'current_episode', 0)
         
-        # More aggressive collision thresholds to prevent flying through obstacles
-        if episode < 200:
-            return 0.20  # Very lenient early training
-        elif episode < 500:
-            return 0.15  # Lenient early training
-        elif episode < 1000:
-            return 0.12  # Moderate
-        elif episode < 2000:
-            return 0.10  # Getting stricter
-        else:
-            return 0.08  # Final strict threshold - no flying through obstacles!
+        return 0.1
 
     def _check_collision(self, uav_pos):
         """Check if UAV is colliding with any obstacle with improved collision detection"""
