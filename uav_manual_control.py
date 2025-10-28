@@ -11,20 +11,35 @@ import sys
 import threading
 import keyboard  # You may need to install: pip install keyboard
 import pickle
+import argparse
 from datetime import datetime
 from collections import deque
 
 # Define the path to your XML model
 MODEL_PATH = "environment.xml"
 
+# Parse command line arguments for configurable parameters
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='UAV Manual Control Simulation')
+    parser.add_argument('--static_obstacles', type=int, default=10, 
+                       help='Number of static obstacles (default: 10)')
+    parser.add_argument('--start_pos', nargs=3, type=float, default=[-3.0, -3.0, 1.0],
+                       help='Start position [x, y, z] (default: [-3.0, -3.0, 1.0])')
+    parser.add_argument('--goal_pos', nargs=3, type=float, default=[3.0, 3.0, 1.0],
+                       help='Goal position [x, y, z] (default: [3.0, 3.0, 1.0])')
+    return parser.parse_args()
+
+# Parse command line arguments
+args = parse_arguments()
+
 # Configuration parameters - MUST match training environment
 CONFIG = {
-    'start_pos': np.array([-3.0, -3.0, 1.0]),  # Default start position (will be updated dynamically)
-    'goal_pos': np.array([3.0, 3.0, 1.0]),     # Default goal position (will be updated dynamically)
+    'start_pos': np.array(args.start_pos),  # Configurable start position
+    'goal_pos': np.array(args.goal_pos),    # Configurable goal position
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,
-    'static_obstacles': 10,
+    'static_obstacles': args.static_obstacles,  # Configurable obstacle count
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,

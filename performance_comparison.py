@@ -318,7 +318,10 @@ class PerformanceComparison:
             
             # Run without capturing output so user can interact
             result = subprocess.run([
-                sys.executable, 'uav_manual_control.py'
+                sys.executable, 'uav_manual_control.py',
+                '--static_obstacles', str(len(env.obstacles)),
+                '--start_pos', str(CONFIG['start_pos'][0]), str(CONFIG['start_pos'][1]), str(CONFIG['start_pos'][2]),
+                '--goal_pos', str(CONFIG['goal_pos'][0]), str(CONFIG['goal_pos'][1]), str(CONFIG['goal_pos'][2])
             ], timeout=300)  # 5 minute timeout, no output capture
             
             end_time = time.time()
