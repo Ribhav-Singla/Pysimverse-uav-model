@@ -28,8 +28,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train UAV with RDR system')
     parser.add_argument('--lambda', dest='ns_lambda', type=float, default=1.0,
                         help='Neurosymbolic lambda value (0=pure RL, 1=RDR when available) (default: 1.0)')
-    parser.add_argument('--episodes', type=int, default=100,
-                        help='Episodes per curriculum level (default: 100)')
+    parser.add_argument('--episodes', type=int, default=50,
+                        help='Episodes per curriculum level (default: 50)')
     args = parser.parse_args()
     
     ############## Hyperparameters ##############
@@ -41,14 +41,14 @@ def main():
     # Curriculum Learning Parameters
     curriculum_learning = True
     episodes_per_level_count = args.episodes  # Episodes per curriculum level (from command line)
-    total_levels = 10           # Obstacle levels 1-10
+    total_levels = 7           # Obstacle levels 1-7
     
     # Set equal episodes for each level
     episodes_per_level = [episodes_per_level_count] * total_levels
-    total_episodes = episodes_per_level_count * total_levels  # 300 * 10 = 3000 episodes
-    
+    total_episodes = episodes_per_level_count * total_levels  # 300 * 7 = 2100 episodes
+
     max_episodes = total_episodes
-    max_timesteps = 50000        # max timesteps in one episode
+    max_timesteps = 20000        # max timesteps in one episode
 
     update_timestep = 1024      # OPTIMIZED: update policy every 1024 timesteps (was 2048)
     action_std = 1.0            # OPTIMIZED: Start with 100% exploration (was 0.3)

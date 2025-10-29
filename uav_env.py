@@ -32,7 +32,7 @@ CONFIG = {
     'collision_distance': 0.1,
     'control_dt': 0.05,
     'max_steps': 20000,  # Max steps per episode
-    'step_reward': -0.1,  # Living penalty per step
+    'step_reward': -0.2,  # Living penalty per step
     'lidar_range': 2.9,  # LIDAR maximum detection range
     'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
 }

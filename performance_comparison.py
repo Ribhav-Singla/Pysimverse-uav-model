@@ -103,21 +103,31 @@ class PerformanceTracker:
         direct_distance = np.linalg.norm(self.path_positions[-1] - self.path_positions[0])
         return direct_distance / self.path_length if self.path_length > 0 else 0.0
 
-class ManualController:
-    """Handle manual control input for human expert trials"""
+class IntegratedManualController:
+    """Integrated manual control system for human expert trials within the comparison environment"""
     
     def __init__(self):
         self.target_velocity = np.array([0.0, 0.0])
+        self.current_velocity = np.array([0.0, 0.0])
         self.active = False
-        self.manual_speed = CONFIG.get('manual_speed', 0.8)
+        self.manual_speed = 0.8
+        self.manual_acceleration = 0.1
         self.reset_requested = False
         self.exit_requested = False
+        self.path_history = []
+        self.trial_complete = False
+        self.collision_occurred = False
+        self.goal_reached = False
     
     def start_control(self):
         """Start manual control session"""
         self.active = True
         self.reset_requested = False
         self.exit_requested = False
+        self.trial_complete = False
+        self.collision_occurred = False
+        self.goal_reached = False
+        self.path_history = []
         self.print_controls()
     
     def stop_control(self):
@@ -127,16 +137,17 @@ class ManualController:
     def print_controls(self):
         """Print control instructions"""
         print("\n" + "="*60)
-        print("🎮 MANUAL CONTROL ACTIVE")
+        print("🎮 INTEGRATED MANUAL CONTROL ACTIVE")
         print("="*60)
         print("MOVEMENT: Arrow Keys (↑↓←→)")
         print("STOP: SPACE")
         print("RESET: R")
         print("EXIT TRIAL: ESC")
+        print("Navigate from START (green) to GOAL (blue)")
         print("="*60)
     
     def update_controls(self):
-        """Update target velocity based on keyboard input"""
+        """Update target velocity based on keyboard input with smooth acceleration"""
         if not self.active or not KEYBOARD_AVAILABLE:
             return np.array([0.0, 0.0])
         
@@ -144,15 +155,15 @@ class ManualController:
         
         try:
             if keyboard.is_pressed('up'):
-                target_vel[1] += self.manual_speed
+                target_vel[1] += self.manual_speed  # Forward
             if keyboard.is_pressed('down'):
-                target_vel[1] -= self.manual_speed
+                target_vel[1] -= self.manual_speed  # Backward
             if keyboard.is_pressed('left'):
-                target_vel[0] -= self.manual_speed
+                target_vel[0] -= self.manual_speed  # Left
             if keyboard.is_pressed('right'):
-                target_vel[0] += self.manual_speed
+                target_vel[0] += self.manual_speed  # Right
             if keyboard.is_pressed('space'):
-                target_vel = np.array([0.0, 0.0])
+                target_vel = np.array([0.0, 0.0])  # Stop
             if keyboard.is_pressed('r'):
                 self.reset_requested = True
             if keyboard.is_pressed('esc'):
@@ -162,7 +173,188 @@ class ManualController:
             pass
         
         self.target_velocity = target_vel
-        return target_vel
+        
+        # Smooth velocity transition for realistic control
+        vel_diff = self.target_velocity - self.current_velocity
+        self.current_velocity += vel_diff * self.manual_acceleration
+        
+        return self.current_velocity.copy()
+    
+    def update_path_trail(self, model, current_pos):
+        """Update the path trail visualization"""
+        self.path_history.append(current_pos.copy())
+        if len(self.path_history) > 500:  # Limit trail length
+            self.path_history.pop(0)
+        
+        # Update trail geometries if they exist in the model
+        trail_count = len(self.path_history)
+        total_geoms = model.ngeom
+        
+        # Find trail geometries and update them
+        for i in range(min(trail_count, 500)):
+            # Look for trail geometries (they should be at the end of the geom list)
+            geom_idx = total_geoms - 500 + i
+            if 0 <= geom_idx < total_geoms:
+                try:
+                    geom_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_idx) or ""
+                    if "trail_" in geom_name and i < trail_count:
+                        model.geom_pos[geom_idx] = self.path_history[i]
+                        alpha = 0.3 + 0.5 * (i / max(1, trail_count))
+                        model.geom_rgba[geom_idx] = [0.0, 1.0, 0.0, alpha]
+                except:
+                    pass  # Skip if geometry access fails
+    
+    def ensure_uav_visibility(self, model):
+        """Ensure UAV remains visible by protecting its colors"""
+        for i in range(model.ngeom):
+            try:
+                geom_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, i) or ""
+                if "uav_body" in geom_name:
+                    model.geom_rgba[i] = [1.0, 0.0, 0.0, 1.0]  # Red UAV body
+                elif "prop" in geom_name:
+                    model.geom_rgba[i] = [0.0, 0.0, 0.0, 1.0]  # Black propellers
+            except:
+                pass
+    
+    def ensure_markers_visibility(self, model):
+        """Ensure start/goal markers remain visible"""
+        for i in range(model.ngeom):
+            try:
+                geom_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, i) or ""
+                if "start_marker" in geom_name:
+                    model.geom_rgba[i] = [0.0, 1.0, 0.0, 0.8]  # Green start marker
+                elif "start_pole" in geom_name:
+                    model.geom_rgba[i] = [0.0, 1.0, 0.0, 1.0]  # Green start pole
+                elif "goal_marker" in geom_name:
+                    model.geom_rgba[i] = [0.0, 0.0, 1.0, 0.8]  # Blue goal marker
+                elif "goal_pole" in geom_name:
+                    model.geom_rgba[i] = [0.0, 0.0, 1.0, 1.0]  # Blue goal pole
+            except:
+                pass
+
+# Helper functions for LIDAR and collision detection
+def get_lidar_readings(pos, obstacles):
+    """Generate LIDAR readings in 360 degrees around the UAV"""
+    lidar_readings = []
+    lidar_range = CONFIG.get('lidar_range', 2.9)
+    lidar_num_rays = CONFIG.get('lidar_num_rays', 16)
+    
+    for i in range(lidar_num_rays):
+        angle = (2 * np.pi * i) / lidar_num_rays
+        ray_dir = np.array([np.cos(angle), np.sin(angle), 0])
+        
+        min_distance = lidar_range
+        
+        # Check boundary intersection
+        boundary_dist = ray_boundary_intersection(pos, ray_dir)
+        if boundary_dist < min_distance:
+            min_distance = boundary_dist
+        
+        # Check obstacle intersections
+        for obs in obstacles:
+            obs_dist = ray_obstacle_intersection(pos, ray_dir, obs)
+            if obs_dist < min_distance:
+                min_distance = obs_dist
+        
+        # Normalize LIDAR reading to [0, 1] range
+        normalized_distance = min_distance / lidar_range
+        lidar_readings.append(normalized_distance)
+    
+    return np.array(lidar_readings)
+
+def ray_boundary_intersection(pos, ray_dir):
+    """Calculate intersection of ray with world boundaries"""
+    half_world = CONFIG['world_size'] / 2
+    lidar_range = CONFIG.get('lidar_range', 2.9)
+    min_dist = lidar_range
+    
+    boundaries = [
+        (half_world, np.array([1, 0, 0])),
+        (-half_world, np.array([-1, 0, 0])),
+        (half_world, np.array([0, 1, 0])),
+        (-half_world, np.array([0, -1, 0]))
+    ]
+    
+    for boundary_pos, boundary_normal in boundaries:
+        denominator = np.dot(ray_dir, boundary_normal)
+        if abs(denominator) > 1e-6:
+            if boundary_normal[0] != 0:
+                t = (boundary_pos - pos[0]) / ray_dir[0]
+            else:
+                t = (boundary_pos - pos[1]) / ray_dir[1]
+            
+            if t > 0:
+                intersection = pos + t * ray_dir
+                if (-half_world <= intersection[0] <= half_world and 
+                    -half_world <= intersection[1] <= half_world):
+                    min_dist = min(min_dist, t)
+    
+    return min_dist
+
+def ray_obstacle_intersection(pos, ray_dir, obstacle):
+    """Calculate intersection of ray with obstacle"""
+    obs_pos = np.array(obstacle['pos'])
+    lidar_range = CONFIG.get('lidar_range', 2.9)
+    min_dist = lidar_range
+    
+    if obstacle['shape'] == 'box':
+        to_obs = obs_pos - pos
+        proj_length = np.dot(to_obs, ray_dir)
+        
+        if proj_length > 0:
+            closest_point = pos + proj_length * ray_dir
+            lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])
+            
+            if lateral_dist < max(obstacle['size'][0], obstacle['size'][1]):
+                surface_dist = max(0, proj_length - max(obstacle['size'][0], obstacle['size'][1]))
+                min_dist = min(min_dist, surface_dist)
+    
+    elif obstacle['shape'] == 'cylinder':
+        to_obs = obs_pos - pos
+        proj_length = np.dot(to_obs, ray_dir)
+        
+        if proj_length > 0:
+            closest_point = pos + proj_length * ray_dir
+            lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])
+            
+            if lateral_dist < obstacle['size'][0]:
+                surface_dist = max(0, proj_length - obstacle['size'][0])
+                min_dist = min(min_dist, surface_dist)
+    
+    return min_dist
+
+def check_collision_precise(uav_pos, obstacles):
+    """Check if UAV collides with any obstacle with precise threshold"""
+    collision_distance = CONFIG.get('collision_distance', 0.1)
+    
+    for obs in obstacles:
+        obs_pos = np.array(obs['pos'])
+        
+        if obs['shape'] == 'box':
+            # Calculate minimum distance to box faces
+            dx = max(obs_pos[0] - obs['size'][0] - uav_pos[0], 
+                     uav_pos[0] - (obs_pos[0] + obs['size'][0]), 0)
+            dy = max(obs_pos[1] - obs['size'][1] - uav_pos[1], 
+                     uav_pos[1] - (obs_pos[1] + obs['size'][1]), 0)
+            dz = max(obs_pos[2] - obs['size'][2] - uav_pos[2], 
+                     uav_pos[2] - (obs_pos[2] + obs['size'][2]), 0)
+            
+            distance = np.sqrt(dx*dx + dy*dy + dz*dz)
+            
+        elif obs['shape'] == 'cylinder':
+            # Horizontal and vertical distances
+            horizontal_dist = np.sqrt((uav_pos[0]-obs_pos[0])**2 + (uav_pos[1]-obs_pos[1])**2)
+            vertical_dist = max(0, abs(uav_pos[2]-obs_pos[2]) - obs['size'][1])
+            
+            if horizontal_dist <= obs['size'][0] and vertical_dist == 0:
+                distance = 0  # Inside cylinder
+            else:
+                distance = max(horizontal_dist - obs['size'][0], vertical_dist)
+        
+        if distance < collision_distance:
+            return True, obs['id'], distance
+    
+    return False, None, float('inf')
 
 class ComparisonEnvironment:
     """Environment wrapper for running comparison trials"""
@@ -173,12 +365,22 @@ class ComparisonEnvironment:
         self.setup_environment()
     
     def setup_environment(self):
-        """Setup environment for the current level"""
-        # Generate obstacles for current level
+        """Setup environment for the current level with deterministic obstacle generation"""
+        # FIXED: Use level-based seed for reproducible obstacle generation
+        # This ensures the same level always generates identical obstacles
+        import random
+        random.seed(1000 + self.level)  # Deterministic seed based on level
+        np.random.seed(1000 + self.level)  # Also set numpy seed
+        
+        # Generate obstacles for current level (now deterministic)
         self.obstacles = EnvironmentGenerator.generate_obstacles(self.level)
         
-        # Generate safe start and goal positions
+        # Generate safe start and goal positions (also deterministic)
         self.generate_safe_positions()
+        
+        # Store positions for reuse across trials
+        self.start_pos = CONFIG['start_pos'].copy()
+        self.goal_pos = CONFIG['goal_pos'].copy()
         
         # Create XML file
         EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
@@ -188,11 +390,11 @@ class ComparisonEnvironment:
         self.data = mujoco.MjData(self.model)
     
     def generate_safe_positions(self):
-        """Generate safe start and goal positions for the current level"""
-        # Use similar logic as in UAVEnv
+        """Generate safe start and goal positions for the current level (deterministic)"""
+        # Use similar logic as in UAVEnv but make it deterministic per level
         half_world = CONFIG['world_size'] / 2 - 1.0
         
-        # Random start corner
+        # Deterministic corner selection based on level
         corners = [
             np.array([-half_world, -half_world, CONFIG['uav_flight_height']]),
             np.array([half_world, -half_world, CONFIG['uav_flight_height']]),
@@ -200,13 +402,16 @@ class ComparisonEnvironment:
             np.array([half_world, half_world, CONFIG['uav_flight_height']])
         ]
         
-        CONFIG['start_pos'] = corners[0]  # Use consistent start position
+        # Use deterministic start corner (level-based)
+        start_corner_idx = self.level % len(corners)
+        CONFIG['start_pos'] = corners[start_corner_idx].copy()
         
-        # Random goal position (different from start)
-        goal_corners = corners[1:]  # Exclude start corner
-        CONFIG['goal_pos'] = goal_corners[np.random.randint(len(goal_corners))]
+        # Use deterministic goal corner (different from start, level-based)
+        available_goal_corners = [c for i, c in enumerate(corners) if i != start_corner_idx]
+        goal_corner_idx = (self.level + 1) % len(available_goal_corners)
+        CONFIG['goal_pos'] = available_goal_corners[goal_corner_idx].copy()
         
-        print(f"📍 Level {self.level}: Start {CONFIG['start_pos'][:2]}, Goal {CONFIG['goal_pos'][:2]}")
+        print(f"📍 Level {self.level}: Start {CONFIG['start_pos'][:2]}, Goal {CONFIG['goal_pos'][:2]} (deterministic)")
     
     def reset_uav(self):
         """Reset UAV to start position"""
@@ -249,7 +454,6 @@ class PerformanceComparison:
     
     def __init__(self):
         self.results = defaultdict(list)
-        self.manual_controller = ManualController()
         self.check_model_files()
     
     def check_model_files(self):
@@ -268,179 +472,183 @@ class PerformanceComparison:
         if not (self.neural_available or self.neurosymbolic_available):
             print("❌ No trained models found! Please ensure model files exist.")
     
-    def run_manual_trial_using_existing(self, env, max_steps=5000):
-        """Run a manual control trial using the existing uav_manual_control.py file"""
+    def run_integrated_manual_trial(self, env, max_steps=5000):
+        """Run an integrated manual control trial using the same environment as other approaches"""
         if not KEYBOARD_AVAILABLE:
             print("❌ Manual control not available - keyboard module not installed")
             return None
         
-        print("👤 Starting Human Expert trial...")
-        print("🎮 Launching UAV Manual Control (uav_manual_control.py)...")
+        # FIXED: Ensure CONFIG uses the same start/goal positions as other approaches
+        CONFIG['start_pos'] = env.start_pos.copy()
+        CONFIG['goal_pos'] = env.goal_pos.copy()
         
-        # Update CONFIG in the environment to match current level
-        original_start = CONFIG['start_pos'].copy()
-        original_goal = CONFIG['goal_pos'].copy()
+        print("👤 Starting Human Expert trial with INTEGRATED manual control...")
+        print(f"🗺️  Using SAME obstacle configuration as other approaches")
+        print(f"📍 Navigate from START {env.start_pos[:2]} to GOAL {env.goal_pos[:2]}")
+        print(f"🚧 Level {env.level} with {len(env.obstacles)} obstacles")
+        print(f"✅ Synchronized start/goal positions with other approaches")
         
-        try:
-            # Set the current level's start/goal positions
-            CONFIG['start_pos'] = CONFIG['start_pos']
-            CONFIG['goal_pos'] = CONFIG['goal_pos']
+        # FIXED: Regenerate XML with correct start/goal markers for manual control
+        print("🔄 Regenerating environment XML with correct start/goal markers...")
+        EnvironmentGenerator.create_xml_with_obstacles(env.obstacles)
+        
+        # Reload MuJoCo model to get updated start/goal markers
+        env.model = mujoco.MjModel.from_xml_path("environment.xml")
+        env.data = mujoco.MjData(env.model)
+        
+        # Create integrated manual controller
+        controller = IntegratedManualController()
+        controller.start_control()
+        
+        # Initialize performance tracker
+        tracker = PerformanceTracker()
+        tracker.start_trial(env.start_pos)
+        
+        # Reset UAV to start position
+        env.reset_uav()
+        
+        # Open viewer for manual control
+        print("🚀 Starting integrated manual control simulation...")
+        print(f"🟢 GREEN markers show START position: {env.start_pos[:2]}")
+        print(f"🔵 BLUE markers show GOAL position: {env.goal_pos[:2]}")
+        print(f"🔴 RED UAV starts at: {env.start_pos[:2]}")
+        
+        with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
+            step_count = 0
+            control_dt = CONFIG.get('control_dt', 0.05)
+            kp_pos = CONFIG.get('kp_pos', 1.5)
             
-            # Backup original environment.xml if it exists
-            if os.path.exists("environment.xml"):
-                os.rename("environment.xml", "environment_backup.xml")
-            
-            # Create the environment.xml with current obstacles
-            EnvironmentGenerator.create_xml_with_obstacles(env.obstacles)
-            
-            print(f"📍 Navigate from START {CONFIG['start_pos'][:2]} to GOAL {CONFIG['goal_pos'][:2]}")
-            print(f"🚧 Level {env.level} with {len(env.obstacles)} obstacles")
-            print("")
-            print("🎮 Manual Control Instructions:")
-            print("   ↑↓←→  : Move UAV")
-            print("   SPACE : Stop")  
-            print("   R     : Reset")
-            print("   ESC   : Exit")
-            print("")
-            print("🎯 Navigate to the GOAL (blue marker) and avoid obstacles!")
-            print("📊 Performance will be measured automatically.")
-            print("")
-            
-            # Record start time
             start_time = time.time()
             
-            # Run the original manual control script interactively
-            import subprocess
-            
-            print("🚀 Launching interactive manual control...")
-            print("⚠️  A new window will open for manual control.")
-            print("🎮 Use that window to control the UAV, then return here when done.")
-            
-            # Run without capturing output so user can interact
-            result = subprocess.run([
-                sys.executable, 'uav_manual_control.py',
-                '--static_obstacles', str(len(env.obstacles)),
-                '--start_pos', str(CONFIG['start_pos'][0]), str(CONFIG['start_pos'][1]), str(CONFIG['start_pos'][2]),
-                '--goal_pos', str(CONFIG['goal_pos'][0]), str(CONFIG['goal_pos'][1]), str(CONFIG['goal_pos'][2])
-            ], timeout=300)  # 5 minute timeout, no output capture
+            try:
+                while (viewer.is_running() and controller.active and 
+                       not controller.trial_complete and step_count < max_steps):
+                    
+                    # Get current UAV state
+                    current_pos = env.data.qpos[:3].copy()
+                    current_vel = env.data.qvel[:3].copy()
+                    
+                    # Update manual controls
+                    manual_action = controller.update_controls()
+                    
+                    # Handle special keys
+                    if controller.reset_requested:
+                        env.reset_uav()
+                        controller.reset_requested = False
+                        controller.current_velocity = np.array([0.0, 0.0])
+                        print("🔄 UAV reset to start position")
+                        time.sleep(0.2)
+                        continue
+                    
+                    if controller.exit_requested:
+                        print("⏹️ Manual control exited by user")
+                        break
+                    
+                    # Height control (maintain flight altitude)
+                    desired_height = CONFIG['uav_flight_height']
+                    height_error = desired_height - current_pos[2]
+                    vz_correction = kp_pos * height_error
+                    
+                    # Apply manual control actions
+                    env.data.qvel[0] = manual_action[0]  # X-velocity
+                    env.data.qvel[1] = manual_action[1]  # Y-velocity  
+                    env.data.qvel[2] = vz_correction    # Z-velocity (height control)
+                    
+                    # Check goal reached
+                    goal_distance = np.linalg.norm(current_pos - env.goal_pos)
+                    if goal_distance < 0.2 and not controller.goal_reached:
+                        controller.goal_reached = True
+                        controller.trial_complete = True
+                        print(f"\n🎉 GOAL REACHED!")
+                        print(f"📍 Final position: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
+                        print(f"📏 Distance to goal: {goal_distance:.3f}m")
+                        break
+                    
+                    # Check for collision
+                    has_collision, obstacle_id, collision_dist = check_collision_precise(current_pos, env.obstacles)
+                    if has_collision:
+                        controller.collision_occurred = True
+                        controller.trial_complete = True
+                        print(f"\n💥 COLLISION DETECTED!")
+                        print(f"💀 UAV crashed into obstacle: {obstacle_id}")
+                        print(f"📏 Collision distance: {collision_dist:.3f}m")
+                        break
+                    
+                    # Check boundaries
+                    half_world = CONFIG['world_size'] / 2
+                    if (abs(current_pos[0]) > half_world or abs(current_pos[1]) > half_world or 
+                        current_pos[2] < 0.1 or current_pos[2] > 5.0):
+                        controller.collision_occurred = True  # Treat as collision
+                        controller.trial_complete = True
+                        print(f"\n🚨 BOUNDARY VIOLATION!")
+                        print(f"📍 UAV position: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
+                        break
+                    
+                    # Step the simulation
+                    mujoco.mj_step(env.model, env.data)
+                    
+                    # Update path trail visualization
+                    if step_count % 5 == 0:
+                        controller.update_path_trail(env.model, current_pos)
+                    
+                    # Ensure UAV and marker visibility
+                    controller.ensure_uav_visibility(env.model)
+                    controller.ensure_markers_visibility(env.model)
+                    
+                    # Update performance tracking
+                    tracker.update_step(current_pos, env.goal_pos)
+                    
+                    # Forward to viewer
+                    viewer.sync()
+                    
+                    # Status updates
+                    if step_count % 100 == 0:
+                        print(f"Step {step_count:4d}: Pos=({current_pos[0]:.1f},{current_pos[1]:.1f},{current_pos[2]:.1f}) | "
+                              f"Goal dist: {goal_distance:.2f}m")
+                    
+                    step_count += 1
+                    time.sleep(control_dt)
+                    
+            except KeyboardInterrupt:
+                print("🛑 Manual control interrupted by user")
             
             end_time = time.time()
             duration = end_time - start_time
             
-            # Ask user for result since we can't parse output
-            print("\n🔍 Manual control session completed.")
-            print("Please report the outcome:")
-            print("1 - Success (reached goal)")
-            print("2 - Collision (hit obstacle)")
-            print("3 - Gave up / Other")
+            # Finalize tracking
+            tracker.end_trial(
+                success=controller.goal_reached,
+                collision=controller.collision_occurred,
+                out_of_bounds=False,  # Handled as collision
+                timeout=(step_count >= max_steps)
+            )
             
-            while True:
-                try:
-                    choice = input("Enter your choice (1-3): ").strip()
-                    if choice in ['1', '2', '3']:
-                        break
-                    print("Please enter 1, 2, or 3")
-                except KeyboardInterrupt:
-                    choice = '3'
-                    break
+            # Get final metrics
+            metrics = tracker.get_metrics()
+            metrics['duration'] = duration  # Override with actual duration
             
-            success = (choice == '1')
-            collision = (choice == '2')
-            
-            if success:
-                print("🎯 Manual control completed successfully!")
-            elif collision:
-                print("💥 Manual control ended with collision!")
+            # Print result summary
+            if controller.goal_reached:
+                print("\n🎯 Manual control completed successfully!")
+            elif controller.collision_occurred:
+                print("\n💥 Manual control ended with collision!")
+            elif step_count >= max_steps:
+                print("\n⏰ Manual control timed out!")
             else:
-                print("⏹️ Manual control session ended without completion.")
-            
-            # Since we can't get exact metrics from the original script,
-            # we'll return estimated metrics based on the outcome
-            if success:
-                # Estimate metrics for successful completion
-                direct_distance = np.linalg.norm(CONFIG['goal_pos'] - CONFIG['start_pos'])
-                estimated_path_length = direct_distance * 1.2  # Assume 20% longer than direct path
-                estimated_steps = int(duration / CONFIG.get('control_dt', 0.05))
-                
-                metrics = {
-                    'path_length': estimated_path_length,
-                    'step_count': estimated_steps,
-                    'success': True,
-                    'collision': False,
-                    'out_of_bounds': False,
-                    'timeout': False,
-                    'final_distance': 0.2,  # Within goal tolerance
-                    'duration': duration,
-                    'path_efficiency': direct_distance / estimated_path_length
-                }
-            elif collision:
-                # Estimate metrics for collision
-                direct_distance = np.linalg.norm(CONFIG['goal_pos'] - CONFIG['start_pos'])
-                estimated_path_length = direct_distance * 0.5  # Partial path
-                estimated_steps = int(duration / CONFIG.get('control_dt', 0.05))
-                
-                metrics = {
-                    'path_length': estimated_path_length,
-                    'step_count': estimated_steps,
-                    'success': False,
-                    'collision': True,
-                    'out_of_bounds': False,
-                    'timeout': False,
-                    'final_distance': direct_distance * 0.5,  # Estimate based on partial completion
-                    'duration': duration,
-                    'path_efficiency': 0.5
-                }
-            else:
-                # User exited or other termination
-                direct_distance = np.linalg.norm(CONFIG['goal_pos'] - CONFIG['start_pos'])
-                estimated_steps = int(duration / CONFIG.get('control_dt', 0.05))
-                
-                metrics = {
-                    'path_length': 1.0,  # Minimal movement
-                    'step_count': estimated_steps,
-                    'success': False,
-                    'collision': False,
-                    'out_of_bounds': False,
-                    'timeout': duration > 250,  # Close to timeout
-                    'final_distance': direct_distance,  # No progress
-                    'duration': duration,
-                    'path_efficiency': 0.1
-                }
+                print("\n⏹️ Manual control session ended.")
             
             return metrics
-            
-        except subprocess.TimeoutExpired:
-            print("⏰ Manual control timed out after 5 minutes")
-            return {
-                'path_length': 0.0,
-                'step_count': 0,
-                'success': False,
-                'collision': False,
-                'out_of_bounds': False,
-                'timeout': True,
-                'final_distance': np.linalg.norm(CONFIG['goal_pos'] - CONFIG['start_pos']),
-                'duration': 300.0,
-                'path_efficiency': 0.0
-            }
-        except Exception as e:
-            print(f"❌ Manual control failed: {e}")
-            return None
-        finally:
-            # Restore original positions
-            CONFIG['start_pos'] = original_start
-            CONFIG['goal_pos'] = original_goal
-            
-            # Restore original environment.xml if we backed it up
-            if os.path.exists("environment_backup.xml"):
-                if os.path.exists("environment.xml"):
-                    os.remove("environment.xml")
-                os.rename("environment_backup.xml", "environment.xml")
     
 
     
     def run_agent_trial_using_runner(self, env, model_path, agent_type="Neural", max_steps=5000):
         """Run an agent trial using the UAVAgentRunner"""
         print(f"🤖 Starting {agent_type} agent trial...")
+        
+        # FIXED: Ensure CONFIG uses the same start/goal positions as environment
+        CONFIG['start_pos'] = env.start_pos.copy()
+        CONFIG['goal_pos'] = env.goal_pos.copy()
+        print(f"✅ Using SAME start/goal positions: START {env.start_pos[:2]} → GOAL {env.goal_pos[:2]}")
         
         # Setup neurosymbolic configuration based on agent type
         if agent_type == "Neurosymbolic":
@@ -495,20 +703,27 @@ class PerformanceComparison:
             return None
     
     def run_level_comparison(self, level):
-        """Run comparison for a specific level"""
+        """Run comparison for a specific level with consistent environment across all approaches"""
         print(f"\n🎯 LEVEL {level} - {level} OBSTACLES")
         print("="*50)
         
+        # FIXED: Generate obstacles once per level and reuse for all approaches
+        # This ensures fair comparison with identical obstacle configurations
         env = ComparisonEnvironment(level)
         level_results = {}
         
-        # Run trials for each approach in sequence
+        print(f"🗺️  Generated level {level} environment with {len(env.obstacles)} obstacles")
+        print(f"📍 Start: [{env.start_pos[0]:.1f}, {env.start_pos[1]:.1f}] → Goal: [{env.goal_pos[0]:.1f}, {env.goal_pos[1]:.1f}]")
+        print(f"⚖️  ALL APPROACHES will use IDENTICAL obstacle configuration for fair comparison")
+        print(f"🔧 Environment stored positions: Start={env.start_pos}, Goal={env.goal_pos}")
         
-        # 1. Human Expert (first)
+        # Run trials for each approach in sequence - ALL USE SAME OBSTACLES & ENVIRONMENT
+        
+        # 1. Human Expert (first) - Uses SAME obstacles as others
         if KEYBOARD_AVAILABLE:
-            print(f"\n--- Human Expert Trial ---")
+            print(f"\n--- Human Expert Trial (Same Environment) ---")
             try:
-                metrics = self.run_manual_trial_using_existing(env)
+                metrics = self.run_integrated_manual_trial(env)
                 level_results["Human Expert"] = metrics
                 self.print_trial_results("Human Expert", metrics)
             except KeyboardInterrupt:
@@ -520,9 +735,9 @@ class PerformanceComparison:
         else:
             print("⚠️  Skipping Human Expert trial - keyboard module not available")
         
-        # 2. Neural Only (second)
+        # 2. Neural Only (second) - REUSES SAME obstacles & environment
         if self.neural_available:
-            print(f"\n--- Neural Only Trial ---")
+            print(f"\n--- Neural Only Trial (Same Environment) ---")
             try:
                 metrics = self.run_agent_trial_using_runner(env, self.neural_model_path, "Neural")
                 level_results["Neural Only"] = metrics
@@ -534,9 +749,9 @@ class PerformanceComparison:
                 print(f"❌ Neural Only trial failed: {e}")
                 level_results["Neural Only"] = None
         
-        # 3. Neurosymbolic (third)
+        # 3. Neurosymbolic (third) - REUSES SAME obstacles & environment  
         if self.neurosymbolic_available:
-            print(f"\n--- Neurosymbolic Trial ---")
+            print(f"\n--- Neurosymbolic Trial (Same Environment) ---")
             try:
                 metrics = self.run_agent_trial_using_runner(env, self.neurosymbolic_model_path, "Neurosymbolic")
                 level_results["Neurosymbolic"] = metrics

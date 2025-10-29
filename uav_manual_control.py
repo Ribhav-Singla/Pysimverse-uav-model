@@ -1,4 +1,5 @@
-# UAV Manual Control Simulation
+# UAV Performance Comparison System
+# Integrated comparison of Human Expert, Neural Only, and Neurosymbolic approaches
 import numpy as np
 import mujoco
 import mujoco.viewer
@@ -12,21 +13,130 @@ import threading
 import keyboard  # You may need to install: pip install keyboard
 import pickle
 import argparse
+import csv
 from datetime import datetime
-from collections import deque
+from collections import deque, defaultdict
+
+# Try to import keyboard for manual control
+try:
+    import keyboard
+    KEYBOARD_AVAILABLE = True
+except ImportError:
+    print("⚠️  Warning: 'keyboard' module not available. Install with: pip install keyboard")
+    print("Manual control trials will be disabled.")
+    KEYBOARD_AVAILABLE = False
+
+# Import custom modules for agent comparison
+try:
+    from uav_env import UAVEnv, EnvironmentGenerator as UAVEnvGenerator
+    from ppo_agent import PPOAgent
+    from uav_agent_runner import UAVAgentRunner
+    AGENTS_AVAILABLE = True
+except ImportError:
+    print("⚠️  Warning: Agent modules not available. Only manual control will work.")
+    AGENTS_AVAILABLE = False
+
+# Add argument parsing for different execution modes
+parser = argparse.ArgumentParser(description='UAV Performance Comparison System')
+parser.add_argument('--mode', type=str, choices=['manual', 'comparison', 'level'], 
+                   default='manual', help='Execution mode: manual (original manual control), comparison (single level), level (multi-level range)')
+parser.add_argument('--level', type=int, default=1, 
+                   help='Curriculum level for single comparison (1-10)')
+parser.add_argument('--start-level', type=int, default=1, 
+                   help='Starting curriculum level for multi-level comparison')
+parser.add_argument('--end-level', type=int, default=10, 
+                   help='Ending curriculum level for multi-level comparison')
+
+args = parser.parse_args()
 
 # Define the path to your XML model
 MODEL_PATH = "environment.xml"
 
+# Performance Tracking Classes
+class PerformanceTracker:
+    """Track performance metrics for each approach"""
+    
+    def __init__(self):
+        self.reset()
+    
+    def reset(self):
+        """Reset all metrics for a new trial"""
+        self.start_time = None
+        self.end_time = None
+        self.path_length = 0.0
+        self.step_count = 0
+        self.success = False
+        self.collision = False
+        self.out_of_bounds = False
+        self.timeout = False
+        self.final_distance = None
+        self.path_positions = []
+    
+    def start_trial(self, start_pos):
+        """Start tracking a new trial"""
+        self.reset()
+        self.start_time = time.time()
+        self.path_positions = [start_pos.copy()]
+    
+    def update_step(self, position, goal_pos):
+        """Update metrics for each step"""
+        if len(self.path_positions) > 0:
+            step_distance = np.linalg.norm(position - self.path_positions[-1])
+            self.path_length += step_distance
+        
+        self.path_positions.append(position.copy())
+        self.step_count += 1
+        self.final_distance = np.linalg.norm(position - goal_pos)
+    
+    def end_trial(self, success=False, collision=False, out_of_bounds=False, timeout=False):
+        """End the trial and calculate final metrics"""
+        self.end_time = time.time()
+        self.success = success
+        self.collision = collision
+        self.out_of_bounds = out_of_bounds
+        self.timeout = timeout
+    
+    def get_metrics(self):
+        """Get performance metrics dictionary"""
+        duration = (self.end_time - self.start_time) if self.end_time and self.start_time else 0
+        
+        return {
+            'path_length': self.path_length,
+            'step_count': self.step_count,
+            'success': self.success,
+            'collision': self.collision,
+            'out_of_bounds': self.out_of_bounds,
+            'timeout': self.timeout,
+            'final_distance': self.final_distance,
+            'duration': duration,
+            'path_efficiency': self.calculate_path_efficiency()
+        }
+    
+    def calculate_path_efficiency(self):
+        """Calculate path efficiency (direct distance / actual path length)"""
+        if len(self.path_positions) < 2 or self.path_length == 0:
+            return 0.0
+        
+        direct_distance = np.linalg.norm(self.path_positions[-1] - self.path_positions[0])
+        return direct_distance / self.path_length if self.path_length > 0 else 0.0
+
 # Parse command line arguments for configurable parameters
 def parse_arguments():
-    parser = argparse.ArgumentParser(description='UAV Manual Control Simulation')
+    parser = argparse.ArgumentParser(description='UAV Performance Comparison System')
+    parser.add_argument('--mode', choices=['manual', 'comparison', 'level'], default='comparison',
+                       help='Run mode: manual (manual control only), comparison (single level comparison), level (multi-level range)')
+    parser.add_argument('--level', type=int, default=1, 
+                       help='Curriculum level for comparison (default: 1)')
+    parser.add_argument('--start_level', '--start-level', type=int, default=1,
+                       help='Starting curriculum level (default: 1)')  
+    parser.add_argument('--end_level', '--end-level', type=int, default=10,
+                       help='Ending curriculum level (default: 10)')
     parser.add_argument('--static_obstacles', type=int, default=10, 
-                       help='Number of static obstacles (default: 10)')
+                       help='Number of static obstacles for manual mode (default: 10)')
     parser.add_argument('--start_pos', nargs=3, type=float, default=[-3.0, -3.0, 1.0],
-                       help='Start position [x, y, z] (default: [-3.0, -3.0, 1.0])')
+                       help='Start position [x, y, z] for manual mode (default: [-3.0, -3.0, 1.0])')
     parser.add_argument('--goal_pos', nargs=3, type=float, default=[3.0, 3.0, 1.0],
-                       help='Goal position [x, y, z] (default: [3.0, 3.0, 1.0])')
+                       help='Goal position [x, y, z] for manual mode (default: [3.0, 3.0, 1.0])')
     return parser.parse_args()
 
 # Parse command line arguments
@@ -94,14 +204,17 @@ class EnvironmentGenerator:
         return random.choice(corners)
     
     @staticmethod
-    def generate_obstacles():
-        """Generate both static and dynamic obstacles with random non-overlapping positions"""
+    def generate_obstacles(num_obstacles=None):
+        """Generate obstacles with specified count for curriculum learning"""
+        if num_obstacles is None:
+            num_obstacles = CONFIG['static_obstacles']
+            
         obstacles = []
         world_size = CONFIG['world_size']
         half_world = world_size / 2
         
-        # Generate a grid of possible positions for uniform distribution
-        grid_size = int(math.sqrt(CONFIG['static_obstacles'])) + 1
+        # Generate potential positions with grid-based distribution
+        grid_size = int(math.sqrt(max(num_obstacles, 9))) + 1
         cell_size = world_size / grid_size
         positions = []
         
@@ -111,14 +224,19 @@ class EnvironmentGenerator:
                 y = -half_world + (j + 0.5) * cell_size
                 positions.append((x, y))
         
-        # Shuffle positions for random assignment
         random.shuffle(positions)
         
-        # Generate static obstacles with random placement
-        for i in range(CONFIG['static_obstacles']):
-            x, y = positions[i]
+        for i in range(num_obstacles):
+            x, y = positions[i % len(positions)]
             
-            # Random size and shape
+            # Add some randomness to avoid perfect grid alignment
+            x += random.uniform(-cell_size/4, cell_size/4)
+            y += random.uniform(-cell_size/4, cell_size/4)
+            
+            # Ensure obstacles stay within bounds
+            x = max(-half_world + 0.5, min(half_world - 0.5, x))
+            y = max(-half_world + 0.5, min(half_world - 0.5, y))
+            
             size_x = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
             size_y = random.uniform(CONFIG['min_obstacle_size'], CONFIG['max_obstacle_size'])
             height = CONFIG['obstacle_height']
@@ -359,17 +477,82 @@ def ray_obstacle_intersection(pos, ray_dir, obstacle):
     
     return min_dist
 
+class ComparisonEnvironment:
+    """Environment wrapper for running comparison trials"""
+    
+    def __init__(self, level=1):
+        self.level = level
+        self.obstacles = []
+        self.setup_environment()
+    
+    def setup_environment(self):
+        """Setup environment for the current level with deterministic obstacle generation"""
+        # Use level-based seed for reproducible obstacle generation
+        random.seed(1000 + self.level)
+        np.random.seed(1000 + self.level)
+        
+        # Generate obstacles for current level (now deterministic)
+        self.obstacles = EnvironmentGenerator.generate_obstacles(self.level)
+        
+        # Generate safe start and goal positions (also deterministic)
+        self.generate_safe_positions()
+        
+        # Store positions for reuse across trials
+        self.start_pos = CONFIG['start_pos'].copy()
+        self.goal_pos = CONFIG['goal_pos'].copy()
+        
+        # Create XML file
+        EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+        
+        # Load MuJoCo model
+        self.model = mujoco.MjModel.from_xml_path(MODEL_PATH)
+        self.data = mujoco.MjData(self.model)
+    
+    def generate_safe_positions(self):
+        """Generate safe start and goal positions for the current level (deterministic)"""
+        half_world = CONFIG['world_size'] / 2 - 1.0
+        
+        # Deterministic corner selection based on level
+        corners = [
+            np.array([-half_world, -half_world, CONFIG['uav_flight_height']]),
+            np.array([half_world, -half_world, CONFIG['uav_flight_height']]),
+            np.array([-half_world, half_world, CONFIG['uav_flight_height']]),
+            np.array([half_world, half_world, CONFIG['uav_flight_height']])
+        ]
+        
+        # Use deterministic start corner (level-based)
+        start_corner_idx = self.level % len(corners)
+        CONFIG['start_pos'] = corners[start_corner_idx].copy()
+        
+        # Use deterministic goal corner (different from start, level-based)
+        available_goal_corners = [c for i, c in enumerate(corners) if i != start_corner_idx]
+        goal_corner_idx = (self.level + 1) % len(available_goal_corners)
+        CONFIG['goal_pos'] = available_goal_corners[goal_corner_idx].copy()
+        
+        print(f"📍 Level {self.level}: Start {CONFIG['start_pos'][:2]}, Goal {CONFIG['goal_pos'][:2]} (deterministic)")
+    
+    def reset_uav(self):
+        """Reset UAV to start position"""
+        self.data.qpos[:3] = CONFIG['start_pos']
+        self.data.qpos[2] = CONFIG['uav_flight_height']
+        self.data.qvel[:] = 0
+
 class ManualControlSystem:
     """System to handle keyboard input and data recording"""
-    def __init__(self):
+    def __init__(self, comparison_mode=False):
         self.target_velocity = np.array([0.0, 0.0])  # Target velocity from keyboard
         self.current_velocity = np.array([0.0, 0.0])  # Smoothed current velocity
         self.recording_buffer = []  # Buffer to store recorded data
         self.is_recording = True
         self.controls_active = True
+        self.comparison_mode = comparison_mode
+        self.trial_complete = False
+        self.collision_occurred = False
+        self.goal_reached = False
         
         # Control instructions
-        self.print_controls()
+        if not comparison_mode:
+            self.print_controls()
         
     def print_controls(self):
         print("\n" + "="*60)
@@ -485,6 +668,378 @@ class ManualControlSystem:
             'size_mb': len(pickle.dumps(self.recording_buffer)) / (1024 * 1024) if self.recording_buffer else 0
         }
 
+class PerformanceComparison:
+    """Main comparison class"""
+    
+    def __init__(self):
+        self.results = defaultdict(dict)
+        self.save_path = "performance_comparison_results.csv"
+        self.check_model_files()
+    
+    def check_model_files(self):
+        """Check which model files are available"""
+        if not AGENTS_AVAILABLE:
+            self.neural_available = False
+            self.neurosymbolic_available = False
+            return
+            
+        print("🤖 Checking available PPO models...")
+        
+        self.neural_model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights_lambda_0_0.pth"
+        self.neurosymbolic_model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights_lambda_1_0.pth"
+        
+        self.neural_available = os.path.exists(self.neural_model_path)
+        self.neurosymbolic_available = os.path.exists(self.neurosymbolic_model_path)
+        
+        print(f"✅ Neural model: {'Available' if self.neural_available else 'Missing'}")
+        print(f"✅ Neurosymbolic model: {'Available' if self.neurosymbolic_available else 'Missing'}")
+        
+        if not (self.neural_available or self.neurosymbolic_available):
+            print("❌ No trained models found! Only manual control will be available.")
+    
+    def run_agent_trial(self, env, model_path, agent_type="Neural", max_steps=5000):
+        """Run an agent trial using the UAVAgentRunner"""
+        if not AGENTS_AVAILABLE:
+            print(f"❌ {agent_type} agent not available - missing agent modules")
+            return None
+            
+        print(f"🤖 Starting {agent_type} agent trial...")
+        
+        # Ensure CONFIG uses the same start/goal positions as environment
+        CONFIG['start_pos'] = env.start_pos.copy()
+        CONFIG['goal_pos'] = env.goal_pos.copy()
+        
+        # Setup neurosymbolic configuration based on agent type
+        if agent_type == "Neurosymbolic":
+            ns_cfg = {'use_neurosymbolic': True, 'lambda': 1.0}
+        else:
+            ns_cfg = {'use_neurosymbolic': False, 'lambda': 0.0}
+        
+        # Create agent runner
+        runner = UAVAgentRunner(
+            model_path=model_path,
+            ns_cfg=ns_cfg,
+            max_steps=max_steps,
+            show_viewer=True,
+            verbose=False
+        )
+        
+        try:
+            # Setup environment with current obstacles
+            runner.setup_environment(obstacles=env.obstacles)
+            
+            # Run trial
+            results = runner.run_trial()
+            
+            # Convert results to our format
+            direct_distance = np.linalg.norm(CONFIG['goal_pos'] - CONFIG['start_pos'])
+            metrics = {
+                'path_length': results['path_length'],
+                'step_count': results['step_count'],
+                'success': results['success'],
+                'collision': results['collision'],
+                'out_of_bounds': results['out_of_bounds'],
+                'timeout': results['timeout'],
+                'final_distance': results['final_distance'],
+                'duration': 0.0,  # Not tracked in runner
+                'path_efficiency': direct_distance / results['path_length'] if results['path_length'] > 0 else 0.0
+            }
+            
+            # Print result
+            if results['success']:
+                print("🎯 Goal reached!")
+            elif results['collision']:
+                print("💥 Collision detected!")
+            elif results['out_of_bounds']:
+                print("🚫 Out of bounds!")
+            elif results['timeout']:
+                print("⏰ Trial timed out!")
+            
+            return metrics
+            
+        except Exception as e:
+            print(f"❌ Agent trial failed: {e}")
+            return None
+    
+    def run_level_comparison(self, level):
+        """Run comparison for a specific level"""
+        print(f"\n🎯 LEVEL {level} - {level} OBSTACLES")
+        print("="*50)
+        
+        # Generate environment with deterministic obstacles
+        env = ComparisonEnvironment(level)
+        level_results = {}
+        
+        print(f"🗺️  Generated level {level} environment with {len(env.obstacles)} obstacles")
+        print(f"📍 Start: [{env.start_pos[0]:.1f}, {env.start_pos[1]:.1f}] → Goal: [{env.goal_pos[0]:.1f}, {env.goal_pos[1]:.1f}]")
+        print(f"⚖️  ALL APPROACHES will use IDENTICAL configuration for fair comparison")
+        
+        # 1. Human Expert Trial
+        if KEYBOARD_AVAILABLE:
+            print(f"\n--- Human Expert Trial ---")
+            try:
+                metrics = self.run_manual_trial(env)
+                level_results["Human Expert"] = metrics
+                self.print_trial_results("Human Expert", metrics)
+            except KeyboardInterrupt:
+                print(f"❌ Human Expert trial cancelled by user")
+                level_results["Human Expert"] = None
+            except Exception as e:
+                print(f"❌ Human Expert trial failed: {e}")
+                level_results["Human Expert"] = None
+        else:
+            print("⚠️  Skipping Human Expert trial - keyboard module not available")
+        
+        # 2. Neural Only Trial
+        if self.neural_available:
+            print(f"\n--- Neural Only Trial ---")
+            try:
+                metrics = self.run_agent_trial(env, self.neural_model_path, "Neural")
+                level_results["Neural Only"] = metrics
+                self.print_trial_results("Neural Only", metrics)
+            except KeyboardInterrupt:
+                print(f"❌ Neural Only trial cancelled by user")
+                level_results["Neural Only"] = None
+            except Exception as e:
+                print(f"❌ Neural Only trial failed: {e}")
+                level_results["Neural Only"] = None
+        
+        # 3. Neurosymbolic Trial  
+        if self.neurosymbolic_available:
+            print(f"\n--- Neurosymbolic Trial ---")
+            try:
+                metrics = self.run_agent_trial(env, self.neurosymbolic_model_path, "Neurosymbolic")
+                level_results["Neurosymbolic"] = metrics
+                self.print_trial_results("Neurosymbolic", metrics)
+            except KeyboardInterrupt:
+                print(f"❌ Neurosymbolic trial cancelled by user")
+                level_results["Neurosymbolic"] = None
+            except Exception as e:
+                print(f"❌ Neurosymbolic trial failed: {e}")
+                level_results["Neurosymbolic"] = None
+        
+        # Store results
+        self.results[level] = level_results
+        
+        # Print level summary
+        self.print_level_summary(level, level_results)
+        
+        return level_results
+    
+    def print_trial_results(self, approach, metrics):
+        """Print results for a single trial"""
+        if metrics is None:
+            print(f"❌ {approach}: Failed")
+            return
+        
+        status = "✅ SUCCESS" if metrics['success'] else "❌ FAILED"
+        failure_reason = ""
+        if not metrics['success']:
+            if metrics['collision']:
+                failure_reason = " (Collision)"
+            elif metrics['out_of_bounds']:
+                failure_reason = " (Out of Bounds)"
+            elif metrics['timeout']:
+                failure_reason = " (Timeout)"
+        
+        print(f"{status}{failure_reason}")
+        print(f"  Path Length: {metrics['path_length']:.2f}m")
+        print(f"  Steps: {metrics['step_count']}")
+        print(f"  Final Distance: {metrics['final_distance']:.2f}m")
+        print(f"  Duration: {metrics['duration']:.1f}s")
+        print(f"  Path Efficiency: {metrics['path_efficiency']:.2f}")
+    
+    def print_level_summary(self, level, results):
+        """Print summary for a level"""
+        print(f"\n📊 LEVEL {level} SUMMARY")
+        print("-" * 30)
+        
+        for approach, metrics in results.items():
+            if metrics:
+                status = "SUCCESS" if metrics['success'] else "FAILED"
+                print(f"{approach:15}: {status:7} | {metrics['path_length']:6.2f}m | {metrics['step_count']:4d} steps")
+            else:
+                print(f"{approach:15}: ERROR")
+    
+    def save_results_to_csv(self):
+        """Save all results to CSV file"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"performance_comparison_{timestamp}.csv"
+        
+        with open(filename, 'w', newline='') as csvfile:
+            fieldnames = ['level', 'approach', 'success', 'path_length', 'step_count', 
+                         'final_distance', 'duration', 'path_efficiency', 'collision', 
+                         'out_of_bounds', 'timeout']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for level, level_results in self.results.items():
+                for approach, metrics in level_results.items():
+                    if metrics:
+                        row = {
+                            'level': level,
+                            'approach': approach,
+                            'success': metrics['success'],
+                            'path_length': metrics['path_length'],
+                            'step_count': metrics['step_count'],
+                            'final_distance': metrics['final_distance'],
+                            'duration': metrics['duration'],
+                            'path_efficiency': metrics['path_efficiency'],
+                            'collision': metrics['collision'],
+                            'out_of_bounds': metrics['out_of_bounds'],
+                            'timeout': metrics['timeout']
+                        }
+                        writer.writerow(row)
+        
+        print(f"📄 Results saved to {filename}")
+    
+    def run_manual_trial(self, env, max_steps=5000):
+        """Run a manual control trial using the same environment as other approaches"""
+        if not KEYBOARD_AVAILABLE:
+            print("❌ Manual control not available - keyboard module not installed")
+            return None
+        
+        # Ensure CONFIG uses the same start/goal positions as environment
+        CONFIG['start_pos'] = env.start_pos.copy()
+        CONFIG['goal_pos'] = env.goal_pos.copy()
+        
+        print("👤 Starting Human Expert trial with integrated manual control...")
+        print(f"📍 Navigate from START {env.start_pos[:2]} to GOAL {env.goal_pos[:2]}")
+        print(f"🚧 Level {env.level} with {len(env.obstacles)} obstacles")
+        
+        # Regenerate XML with correct start/goal markers
+        EnvironmentGenerator.create_xml_with_obstacles(env.obstacles)
+        env.model = mujoco.MjModel.from_xml_path(MODEL_PATH)
+        env.data = mujoco.MjData(env.model)
+        
+        # Create manual controller in comparison mode
+        control_system = ManualControlSystem(comparison_mode=True)
+        control_system.controls_active = True
+        
+        # Initialize performance tracker
+        tracker = PerformanceTracker()
+        tracker.start_trial(env.start_pos)
+        
+        # Initialize path_history for trail visualization
+        path_history = []
+        
+        # Reset UAV to start position
+        env.reset_uav()
+        
+        print("🚀 Starting manual control simulation...")
+        print(f"🟢 GREEN markers: START position {env.start_pos[:2]}")
+        print(f"🔵 BLUE markers: GOAL position {env.goal_pos[:2]}")
+        print("🎮 Controls: Arrow Keys (↑↓←→), SPACE (stop), R (reset), ESC (exit)")
+        
+        with mujoco.viewer.launch_passive(env.model, env.data) as viewer:
+            step_count = 0
+            control_dt = CONFIG.get('control_dt', 0.05)
+            kp_pos = CONFIG.get('kp_pos', 1.5)
+            
+            start_time = time.time()
+            
+            try:
+                while (viewer.is_running() and control_system.controls_active and 
+                       not control_system.trial_complete and step_count < max_steps):
+                    
+                    # Get current UAV state
+                    current_pos = env.data.qpos[:3].copy()
+                    
+                    # Update manual controls
+                    manual_action = control_system.update_controls()
+                    
+                    # Handle special keys
+                    control_system.handle_special_keys(env.data, env.model, CONFIG['start_pos'])
+                    
+                    # Height control
+                    desired_height = CONFIG['uav_flight_height']
+                    height_error = desired_height - current_pos[2]
+                    vz_correction = kp_pos * height_error
+                    
+                    # Apply manual control actions
+                    env.data.qvel[0] = manual_action[0]  # X-velocity
+                    env.data.qvel[1] = manual_action[1]  # Y-velocity  
+                    env.data.qvel[2] = vz_correction    # Z-velocity
+                    
+                    # Check goal reached
+                    goal_distance = np.linalg.norm(current_pos - env.goal_pos)
+                    if goal_distance < 0.2 and not control_system.goal_reached:
+                        control_system.goal_reached = True
+                        control_system.trial_complete = True
+                        print(f"\n🎉 GOAL REACHED! Distance: {goal_distance:.3f}m")
+                        break
+                    
+                    # Check for collision
+                    has_collision, obstacle_id, collision_dist = EnvironmentGenerator.check_collision(current_pos, env.obstacles)
+                    if has_collision:
+                        control_system.collision_occurred = True
+                        control_system.trial_complete = True
+                        print(f"\n💥 COLLISION with {obstacle_id}! Distance: {collision_dist:.3f}m")
+                        break
+                    
+                    # Check boundaries
+                    half_world = CONFIG['world_size'] / 2
+                    if (abs(current_pos[0]) > half_world or abs(current_pos[1]) > half_world or 
+                        current_pos[2] < 0.1 or current_pos[2] > 5.0):
+                        control_system.collision_occurred = True
+                        control_system.trial_complete = True
+                        print(f"\n🚨 BOUNDARY VIOLATION!")
+                        break
+                    
+                    # Step simulation
+                    mujoco.mj_step(env.model, env.data)
+                    
+                    # Update path trail
+                    if step_count % 5 == 0:
+                        update_path_trail(env.model, env.data, current_pos, path_history)
+                    
+                    # Ensure visibility
+                    ensure_uav_visibility(env.model)
+                    ensure_markers_visibility(env.model)
+                    
+                    # Update performance tracking
+                    tracker.update_step(current_pos, env.goal_pos)
+                    
+                    viewer.sync()
+                    
+                    step_count += 1
+                    time.sleep(control_dt)
+                    
+            except KeyboardInterrupt:
+                print("🛑 Manual control interrupted")
+            
+            end_time = time.time()
+            duration = end_time - start_time
+            
+            # Finalize tracking
+            tracker.end_trial(
+                success=control_system.goal_reached,
+                collision=control_system.collision_occurred,
+                timeout=(step_count >= max_steps)
+            )
+            
+            # Get final metrics
+            metrics = tracker.get_metrics()
+            metrics['duration'] = duration
+            
+            return metrics
+
+def ensure_markers_visibility(model):
+    """Ensure start/goal markers remain visible"""
+    for i in range(model.ngeom):
+        try:
+            geom_name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, i) or ""
+            if "start_marker" in geom_name:
+                model.geom_rgba[i] = [0.0, 1.0, 0.0, 0.8]  # Green start marker
+            elif "start_pole" in geom_name:
+                model.geom_rgba[i] = [0.0, 1.0, 0.0, 1.0]  # Green start pole
+            elif "goal_marker" in geom_name:
+                model.geom_rgba[i] = [0.0, 0.0, 1.0, 0.8]  # Blue goal marker
+            elif "goal_pole" in geom_name:
+                model.geom_rgba[i] = [0.0, 0.0, 1.0, 1.0]  # Blue goal pole
+        except:
+            pass
+
 # Helper function to ensure positions are safe from obstacles
 def check_position_safety(position, obstacles, safety_radius=0.5):
     """Check if a position is safe from obstacle collisions"""
@@ -529,8 +1084,15 @@ def check_position_safety(position, obstacles, safety_radius=0.5):
             
     return True
 
-def update_path_trail(model, data, current_pos):
+def update_path_trail(model, data, current_pos, path_history=None):
     """Update the path trail visualization."""
+    if path_history is None:
+        # Use global path_history if available, otherwise create empty list
+        global _global_path_history
+        if '_global_path_history' not in globals():
+            _global_path_history = []
+        path_history = _global_path_history
+        
     path_history.append(current_pos.copy())
     if len(path_history) > CONFIG['path_trail_length']:
         path_history.pop(0)
@@ -579,255 +1141,226 @@ def ensure_uav_visibility(model):
 
 # === MAIN EXECUTION ===
 
-# Generate obstacles first so we can check positions against them
-print("🏗️ Generating complex environment with static obstacles...")
-obstacles = EnvironmentGenerator.generate_obstacles()
+def run_manual_only():
+    """Run original manual control mode"""
+    # Generate obstacles first
+    print("🏗️ Generating complex environment with static obstacles...")
+    obstacles = EnvironmentGenerator.generate_obstacles()
 
-# Set up safe start and goal positions
-max_attempts = 50
-safety_radius = 0.8  # Keep at least 0.8m from obstacles
+    # Set up safe start and goal positions
+    max_attempts = 50
+    safety_radius = 0.8
 
-# Generate dynamic start position from one of the corners
-start_pos_safe = False
-start_safety_check_attempts = 0
+    # Generate dynamic start position from corners
+    start_pos_safe = False
+    start_safety_check_attempts = 0
 
-print("🏠 Generating random start position from corners...")
-while not start_pos_safe and start_safety_check_attempts < max_attempts:
-    start_safety_check_attempts += 1
-    # Get a random corner position
-    CONFIG['start_pos'] = EnvironmentGenerator.get_random_corner_position()
-    
-    # Check if it's safe
-    if check_position_safety(CONFIG['start_pos'], obstacles, safety_radius):
-        start_pos_safe = True
-        print(f"✅ Safe start position set to: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}, {CONFIG['start_pos'][2]:.1f}]")
-        break
+    print("🏠 Generating random start position from corners...")
+    while not start_pos_safe and start_safety_check_attempts < max_attempts:
+        start_safety_check_attempts += 1
+        CONFIG['start_pos'] = EnvironmentGenerator.get_random_corner_position()
+        
+        if check_position_safety(CONFIG['start_pos'], obstacles, safety_radius):
+            start_pos_safe = True
+            print(f"✅ Safe start position: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}, {CONFIG['start_pos'][2]:.1f}]")
+            break
 
-if not start_pos_safe:
-    print("⚠️ Warning: Could not find safe start position after multiple attempts!")
-    print("⚠️ Using default corner position [-3, -3, 1]")
-    CONFIG['start_pos'] = np.array([-3.0, -3.0, 1.0])
+    if not start_pos_safe:
+        print("⚠️ Using default position [-3, -3, 1]")
+        CONFIG['start_pos'] = np.array([-3.0, -3.0, 1.0])
 
-# Generate dynamic goal position anywhere in the map
-goal_pos_safe = False
-goal_safety_check_attempts = 0
+    # Generate dynamic goal position
+    goal_pos_safe = False
+    goal_safety_check_attempts = 0
 
-print("🎯 Generating random goal position anywhere in map...")
-while not goal_pos_safe and goal_safety_check_attempts < max_attempts:
-    goal_safety_check_attempts += 1
-    # Get a random goal position anywhere in the map
-    CONFIG['goal_pos'] = EnvironmentGenerator.get_random_goal_position()
-    
-    # Ensure goal is not too close to start position
-    start_goal_distance = np.linalg.norm(CONFIG['goal_pos'][:2] - CONFIG['start_pos'][:2])
-    
-    # Check if it's safe and far enough from start
-    if (check_position_safety(CONFIG['goal_pos'], obstacles, safety_radius) and 
-        start_goal_distance > 2.0):  # At least 2m apart
-        goal_pos_safe = True
-        print(f"✅ Safe goal position set to: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
-        print(f"📏 Start-Goal distance: {start_goal_distance:.1f}m")
-        break
-    
-if not goal_pos_safe:
-    print("⚠️ Warning: Could not find a safe goal position after multiple attempts!")
-    print("⚠️ Goal may be too close to obstacles.")
-    print(f"🎯 Using potentially unsafe goal: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
+    print("🎯 Generating random goal position...")
+    while not goal_pos_safe and goal_safety_check_attempts < max_attempts:
+        goal_safety_check_attempts += 1
+        CONFIG['goal_pos'] = EnvironmentGenerator.get_random_goal_position()
+        
+        start_goal_distance = np.linalg.norm(CONFIG['goal_pos'][:2] - CONFIG['start_pos'][:2])
+        
+        if (check_position_safety(CONFIG['goal_pos'], obstacles, safety_radius) and 
+            start_goal_distance > 2.0):
+            goal_pos_safe = True
+            print(f"✅ Safe goal position: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
+            print(f"📏 Start-Goal distance: {start_goal_distance:.1f}m")
+            break
+        
+    if not goal_pos_safe:
+        print("⚠️ Using potentially unsafe goal position")
 
-# Create environment XML with the obstacles
-EnvironmentGenerator.create_xml_with_obstacles(obstacles)
+    # Create environment
+    EnvironmentGenerator.create_xml_with_obstacles(obstacles)
+    model = mujoco.MjModel.from_xml_path(MODEL_PATH)
+    data = mujoco.MjData(model)
 
-# Load the model and create the simulation data
-model = mujoco.MjModel.from_xml_path(MODEL_PATH)
-data = mujoco.MjData(model)
+    print(f"🚁 Manual UAV Navigation Environment Loaded!")
+    print(f"🎯 Navigate from START (green) to GOAL (blue)")
+    print(f"🏠 Start: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}, {CONFIG['start_pos'][2]:.1f}]")
+    print(f"🏁 Goal: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
 
-print(f"🚁 Manual UAV Navigation Environment Loaded!")
-print(f"📊 Model: {model.nu} actuators, {model.nbody} bodies")
-print(f"🎯 Mission: Navigate from START (green) to GOAL (blue) using arrow keys")
-print(f"🏠 Start Position: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}, {CONFIG['start_pos'][2]:.1f}]")
-print(f"🏁 Goal Position: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
-print(f"🚧 Static obstacles: {CONFIG['static_obstacles']}")
-print(f"📏 Obstacle height: {CONFIG['obstacle_height']}m")
-print(f"✈️ UAV flight height: {CONFIG['uav_flight_height']}m")
-print(f"🛣️ Green path trail: {CONFIG['path_trail_length']} points")
+    # Initialize manual control
+    control_system = ManualControlSystem()
+    path_history = []
 
-# Initialize manual control system
-control_system = ManualControlSystem()
-path_history = []
-
-# Open viewer
-with mujoco.viewer.launch_passive(model, data) as viewer:
-    # Reset simulation
-    mujoco.mj_resetData(model, data)
-    
-    # Set initial position
-    data.qpos[:3] = CONFIG['start_pos']
-    data.qpos[3:7] = [1, 0, 0, 0]  # Initial orientation (quaternion)
-    
-    print("\n🎮 Manual Control Active! Use arrow keys to navigate!")
-    time.sleep(2)
-    
-    step_count = 0
-    mission_complete = False
-    collision_occurred = False
-    goal_reached = False
-    
-    try:
-        while viewer.is_running() and control_system.controls_active and not mission_complete and not collision_occurred:
-            # Get current UAV state
-            current_pos = data.qpos[:3].copy()
-            current_vel = data.qvel[:3].copy()
-            
-            # Update manual controls
-            manual_action = control_system.update_controls()
-            control_system.handle_special_keys(data, model, CONFIG['start_pos'])
-            
-            # Create observation for data recording (same as PPO agent would see)
-            goal_dist = CONFIG['goal_pos'] - current_pos
-            lidar_readings = get_lidar_readings(current_pos, obstacles)
-            
-            # === LIDAR FEATURE ENGINEERING (for recording compatibility) ===
-            min_lidar = np.min(lidar_readings)
-            mean_lidar = np.mean(lidar_readings)
-            
-            closest_idx = np.argmin(lidar_readings)
-            closest_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays']
-            obstacle_direction = np.array([np.cos(closest_angle), np.sin(closest_angle)])
-            
-            danger_threshold = 0.36
-            num_close_obstacles = np.sum(lidar_readings < danger_threshold)
-            danger_level = num_close_obstacles / CONFIG['lidar_num_rays']
-            
-            sector_size = len(lidar_readings) // 4
-            front_clear = np.mean(lidar_readings[0:sector_size])
-            right_clear = np.mean(lidar_readings[sector_size:2*sector_size])
-            back_clear = np.mean(lidar_readings[2*sector_size:3*sector_size])
-            left_clear = np.mean(lidar_readings[3*sector_size:4*sector_size])
-            
-            goal_direction_norm = goal_dist[:2] / (np.linalg.norm(goal_dist[:2]) + 1e-8)
-            
-            lidar_features = np.array([
-                min_lidar, mean_lidar, obstacle_direction[0], obstacle_direction[1],
-                danger_level, front_clear, right_clear, back_clear, left_clear,
-                goal_direction_norm[0], goal_direction_norm[1]
-            ])
-            
-            # --- Height Control ---
-            current_height = data.qpos[2]
-            desired_height = CONFIG['uav_flight_height']
-            
-            # Simple P-controller to maintain height
-            height_error = desired_height - current_height
-            vz_correction = CONFIG['kp_pos'] * height_error
-            
-            # Apply manual control actions
-            data.qvel[0] = manual_action[0]  # X-velocity from manual control
-            data.qvel[1] = manual_action[1]  # Y-velocity from manual control
-            data.qvel[2] = vz_correction     # Height controller manages Z-velocity
-            
-            # Check if UAV is at goal position
-            goal_distance = np.linalg.norm(current_pos - CONFIG['goal_pos'])
-            if goal_distance < 0.1 and not goal_reached:
-                goal_reached = True
-                mission_complete = True
-                print(f"\n🎉 GOAL REACHED!")
-                print(f"📍 Final position: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
-                print(f"📏 Distance to goal: {goal_distance:.3f}m")
-                print(f"🏆 MISSION COMPLETE!")
-            
-            # Step the simulation
-            mujoco.mj_step(model, data)
-            
-            # Update path trail visualization
-            if step_count % 5 == 0:
-                update_path_trail(model, data, current_pos)
+    # Run simulation
+    with mujoco.viewer.launch_passive(model, data) as viewer:
+        mujoco.mj_resetData(model, data)
+        data.qpos[:3] = CONFIG['start_pos']
+        data.qpos[3:7] = [1, 0, 0, 0]
+        
+        print("\n🎮 Manual Control Active! Use arrow keys to navigate!")
+        
+        step_count = 0
+        mission_complete = False
+        collision_occurred = False
+        goal_reached = False
+        
+        try:
+            while viewer.is_running() and control_system.controls_active and not mission_complete and not collision_occurred:
+                current_pos = data.qpos[:3].copy()
+                current_vel = data.qvel[:3].copy()
                 
-            # Force UAV visibility every frame to prevent transparency
-            ensure_uav_visibility(model)
-            
-            # Forward model to update rendering
-            viewer.sync()
-            
-            # Check for boundary violation
-            half_world = CONFIG['world_size'] / 2
-            if (abs(current_pos[0]) > half_world or abs(current_pos[1]) > half_world or 
-                current_pos[2] < 0.1 or current_pos[2] > 5.0):
-                collision_occurred = True
-                print(f"\n🚨 BOUNDARY VIOLATION DETECTED!")
-                print(f"📍 UAV position: ({current_pos[0]:.2f}, {current_pos[1]:.2f}, {current_pos[2]:.2f})")
-                print(f"🚫 UAV flew outside simulation boundaries!")
-                print(f"⚠️ MISSION FAILED!")
-                break
-            
-            # Check for collision
-            has_collision, obstacle_id, collision_dist = EnvironmentGenerator.check_collision(data.qpos[:3], obstacles)
-            if has_collision:
-                collision_occurred = True
-                print(f"\n💥 COLLISION DETECTED!")
-                print(f"💀 UAV crashed into obstacle: {obstacle_id}")
-                print(f"📏 Collision distance: {collision_dist:.3f}m")
-                print(f"📍 UAV position at crash: ({data.qpos[0]:.2f}, {data.qpos[1]:.2f}, {data.qpos[2]:.2f})")
-                print(f"⚠️ MISSION FAILED!")
-                break
-            
-            # Record data for this step
-            control_system.record_step(
-                position=current_pos,
-                velocity=current_vel,
-                goal_pos=CONFIG['goal_pos'],
-                lidar_readings=lidar_readings,
-                action=manual_action,
-                collision=has_collision,
-                goal_reached=goal_reached
-            )
-            
-            # Status updates
-            if step_count % 100 == 0:
-                buffer_info = control_system.get_buffer_info()
-                print(f"Step {step_count:4d}: Pos=({current_pos[0]:.1f},{current_pos[1]:.1f},{current_pos[2]:.1f}) | "
-                      f"Goal dist: {goal_distance:.2f}m | Buffer: {buffer_info['steps']} steps")
-            
-            step_count += 1
-            time.sleep(CONFIG['control_dt'])
-            
-    except KeyboardInterrupt:
-        print("\nSimulation interrupted by user")
-    
-    # Final mission status and data handling
-    buffer_info = control_system.get_buffer_info()
-    print(f"\n📊 Total data recorded: {buffer_info['steps']} steps ({buffer_info['size_mb']:.1f} MB)")
-    
-    if collision_occurred:
-        print("\n" + "="*50)
-        print("💥 MISSION RESULT: FAILURE - COLLISION DETECTED")
-        print("🚨 The UAV crashed into an obstacle!")
-        print("💡 Try different navigation strategy")
-        print("="*50)
+                manual_action = control_system.update_controls()
+                control_system.handle_special_keys(data, model, CONFIG['start_pos'])
+                
+                # Height control
+                height_error = CONFIG['uav_flight_height'] - data.qpos[2]
+                vz_correction = CONFIG['kp_pos'] * height_error
+                
+                # Apply actions
+                data.qvel[0] = manual_action[0]
+                data.qvel[1] = manual_action[1]
+                data.qvel[2] = vz_correction
+                
+                # Check goal
+                goal_distance = np.linalg.norm(current_pos - CONFIG['goal_pos'])
+                if goal_distance < 0.1 and not goal_reached:
+                    goal_reached = True
+                    mission_complete = True
+                    print(f"\n🎉 GOAL REACHED! Distance: {goal_distance:.3f}m")
+                
+                mujoco.mj_step(model, data)
+                
+                if step_count % 5 == 0:
+                    update_path_trail(model, data, current_pos, path_history)
+                    
+                ensure_uav_visibility(model)
+                viewer.sync()
+                
+                # Check boundaries
+                half_world = CONFIG['world_size'] / 2
+                if (abs(current_pos[0]) > half_world or abs(current_pos[1]) > half_world or 
+                    current_pos[2] < 0.1 or current_pos[2] > 5.0):
+                    collision_occurred = True
+                    print(f"\n🚨 BOUNDARY VIOLATION!")
+                    break
+                
+                # Check collision
+                has_collision, obstacle_id, collision_dist = EnvironmentGenerator.check_collision(data.qpos[:3], obstacles)
+                if has_collision:
+                    collision_occurred = True
+                    print(f"\n💥 COLLISION with {obstacle_id}!")
+                    break
+                
+                # Record data
+                lidar_readings = get_lidar_readings(current_pos, obstacles)
+                control_system.record_step(
+                    position=current_pos,
+                    velocity=current_vel,
+                    goal_pos=CONFIG['goal_pos'],
+                    lidar_readings=lidar_readings,
+                    action=manual_action,
+                    collision=has_collision,
+                    goal_reached=goal_reached
+                )
+                
+                if step_count % 100 == 0:
+                    print(f"Step {step_count:4d}: Pos=({current_pos[0]:.1f},{current_pos[1]:.1f},{current_pos[2]:.1f}) | Goal dist: {goal_distance:.2f}m")
+                
+                step_count += 1
+                time.sleep(CONFIG['control_dt'])
+                
+        except KeyboardInterrupt:
+            print("\nSimulation interrupted")
         
-    elif mission_complete:
-        print("\n" + "="*50)
-        print("🎉 MISSION RESULT: SUCCESS!")
-        print("🏆 UAV successfully navigated to goal under manual control!")
-        print(f"📍 Start: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}] → Goal: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}]")
-        print("="*50)
+        # Results
+        if mission_complete:
+            print("\n🎉 MISSION SUCCESS!")
+        elif collision_occurred:
+            print("\n💥 MISSION FAILED - COLLISION")
+        else:
+            print("\n⏹️ SIMULATION TERMINATED")
         
-    else:
-        print("\n" + "="*50)
-        print("⏹️ SIMULATION TERMINATED")
-        print("="*50)
-    
-    # Ask user if they want to save recorded data
-    if buffer_info['steps'] > 0:
-        print(f"\n💾 You have {buffer_info['steps']} recorded steps.")
-        print("📝 Press 'S' to save data, or 'ESC' to exit without saving...")
-        
-        while viewer.is_running():
-            if keyboard.is_pressed('s'):
-                control_system.save_data()
-                break
-            elif keyboard.is_pressed('esc'):
-                print("📤 Exiting without saving data.")
-                break
-            time.sleep(0.1)
+        # Save data option
+        buffer_info = control_system.get_buffer_info()
+        if buffer_info['steps'] > 0:
+            print(f"\n💾 Recorded {buffer_info['steps']} steps. Press 'S' to save or 'ESC' to exit...")
+            while viewer.is_running():
+                if keyboard.is_pressed('s'):
+                    control_system.save_data()
+                    break
+                elif keyboard.is_pressed('esc'):
+                    break
+                time.sleep(0.1)
 
-    print("Simulation finished.")
+def main():
+    """Main function with different execution modes"""
+    print("🎮 UAV Performance Comparison System")
+    print("=" * 50)
+    
+    if args.mode == 'manual':
+        print("📋 Mode: Manual Control Only")
+        if not KEYBOARD_AVAILABLE:
+            print("❌ Keyboard module not available!")
+            return
+        run_manual_only()
+        
+    elif args.mode == 'comparison':
+        print(f"📋 Mode: Single Level Comparison (Level {args.level})")
+        comparison = PerformanceComparison()
+        try:
+            comparison.run_level_comparison(args.level)
+            comparison.save_results_to_csv()
+        except KeyboardInterrupt:
+            print("\n👋 Comparison cancelled")
+        
+    elif args.mode == 'level':
+        print(f"📋 Mode: Multi-Level Comparison (Levels {args.start_level}-{args.end_level})")
+        comparison = PerformanceComparison()
+        
+        try:
+            for level in range(args.start_level, args.end_level + 1):
+                comparison.run_level_comparison(level)
+                
+                if level < args.end_level:
+                    print(f"\n🔄 Level {level} completed!")
+                    input("Press Enter to continue to next level, or Ctrl+C to stop...")
+        
+        except KeyboardInterrupt:
+            print(f"\n⏹️ Comparison stopped")
+        
+        # Final summary
+        print("\n" + "="*80)
+        print("🏆 FINAL PERFORMANCE SUMMARY")
+        print("="*80)
+        
+        approaches = set()
+        for level_results in comparison.results.values():
+            approaches.update(level_results.keys())
+        
+        for approach in approaches:
+            print(f"\n🤖 {approach}")
+            successes = sum(1 for level, results in comparison.results.items() 
+                          if approach in results and results[approach] and results[approach]['success'])
+            total = len([level for level, results in comparison.results.items() 
+                        if approach in results and results[approach]])
+            if total > 0:
+                success_rate = successes / total * 100
+                print(f"Success Rate: {success_rate:.1f}% ({successes}/{total})")
+        
+        comparison.save_results_to_csv()
+
+if __name__ == "__main__":
+    main()
