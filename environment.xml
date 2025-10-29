@@ -9,7 +9,7 @@
   <worldbody>
     <geom name="ground" type="plane" size="4.0 4.0 0.1" material="grid"/>
     <light name="light1" pos="0 0 4" dir="0 0 -1" diffuse="1 1 1"/>
-    <body name="chassis" pos="3.0 -3.0 1.0">
+    <body name="chassis" pos="-3.0 -3.0 1.0">
       <joint type="free" name="root"/>
       <geom type="box" size="0.12 0.12 0.02" rgba="1.0 0.0 0.0 1.0" mass="0.8"/>
       <site name="motor1" pos="0.08 0.08 0" size="0.01"/>
@@ -17,7 +17,7 @@
       <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
       <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
     </body>
-    <geom name="static_obs_0" type="cylinder" size="0.09959404686300596 1.0" pos="1.1077930620255083 2.550723895658841 1.0" rgba="0.6719512266071236 0.6246179974843852 0.6896857317516203 1.0"/>
+    <geom name="static_obs_0" type="cylinder" size="0.05868065082027017 1.0" pos="3.33874287248509 2.8751844638476385 1.0" rgba="0.8071110669297109 0.2228590479687095 0.5625453780138345 1.0"/>
   </worldbody>
   <actuator>
     <motor name="m1" gear="0 0 1 0 0 0" site="motor1"/>

@@ -43,11 +43,11 @@ def main():
     # Curriculum Learning Parameters
     curriculum_learning = True
     episodes_per_level_count = args.episodes  # Episodes per curriculum level (from command line)
-    total_levels = 7           # Obstacle levels 1-7
+    total_levels = 10           # Obstacle levels 1-10
     
     # Set equal episodes for each level
     episodes_per_level = [episodes_per_level_count] * total_levels
-    total_episodes = episodes_per_level_count * total_levels  # 300 * 7 = 2100 episodes
+    total_episodes = episodes_per_level_count * total_levels  # 300 * 10 = 3000 episodes
 
     max_episodes = total_episodes
     max_timesteps = 20000        # max timesteps in one episode
