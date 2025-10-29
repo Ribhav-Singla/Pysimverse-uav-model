@@ -7,6 +7,8 @@ import argparse
 import matplotlib
 matplotlib.use('Agg')  # non-interactive backend for saving plots
 import matplotlib.pyplot as plt
+from collections import deque
+import time
 
 class Memory:
     def __init__(self):
@@ -119,7 +121,7 @@ def main():
     episode_rewards_list = []
     episode_success_list = []  # 1 if goal reached this episode else 0
 
-    def save_training_plots(lambda_val):
+    def save_training_plots(lambda_val, real_time=False):
         if len(episode_indices) == 0:
             return
         
@@ -144,35 +146,89 @@ def main():
         roll_success = ema_success
         x_roll = episode_indices
 
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(12, 8))
+        
+        # Reward plot
         plt.subplot(2, 1, 1)
-        plt.scatter(episode_indices, rewards_np, color='lightgray', alpha=0.6, s=8, label='Reward')
+        plt.scatter(episode_indices, rewards_np, color='lightgray', alpha=0.6, s=8, label='Episode Reward')
         plt.plot(x_roll, roll_rewards, color='blue', linewidth=2, label='Reward EMA')
+        
+        # Add current episode marker if real-time
+        if real_time and len(episode_indices) > 0:
+            current_reward = rewards_np[-1]
+            current_episode = episode_indices[-1]
+            plt.scatter([current_episode], [current_reward], color='red', s=50, zorder=10, label=f'Current: {current_reward:.1f}')
+        
         plt.xlabel('Episode')
         plt.ylabel('Reward')
-        plt.title('Episode Reward')
+        plt.title(f'Training Progress - Episode Rewards (λ={lambda_val})')
         
-        # Fixed y-axis range for consistent reward visualization
-        plt.ylim(-1000, 200)
+        # Dynamic y-axis range based on data
+        if len(rewards_np) > 0:
+            min_reward = min(rewards_np.min(), -100)
+            max_reward = max(rewards_np.max(), 200)
+            plt.ylim(min_reward - 50, max_reward + 50)
+        else:
+            plt.ylim(-1000, 200)
         
         plt.legend(loc='best')
         plt.grid(True, alpha=0.3)
 
+        # Success rate plot
         plt.subplot(2, 1, 2)
         plt.scatter(episode_indices, success_np, color='lightgray', alpha=0.6, s=8, label='Success (0/1)')
         plt.plot(x_roll, roll_success, color='green', linewidth=2, label='Success Rate EMA')
+        
+        # Add current success marker if real-time
+        if real_time and len(episode_indices) > 0:
+            current_success = success_np[-1]
+            current_episode = episode_indices[-1]
+            success_color = 'green' if current_success == 1 else 'red'
+            plt.scatter([current_episode], [current_success], color=success_color, s=50, zorder=10, 
+                       label=f'Current: {"Success" if current_success == 1 else "Failed"}')
+        
         plt.xlabel('Episode')
-        plt.ylabel('Success')
-        plt.title('Goal Reached')
+        plt.ylabel('Success Rate')
+        plt.title('Goal Achievement Rate')
         plt.ylim(-0.05, 1.05)
         plt.legend(loc='best')
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         
         # Include lambda value in plot filename
-        plot_filename = f'training_metrics_lambda_{lambda_val:.1f}.png'.replace('.', '_')
-        plt.savefig(plot_filename, dpi=150)
+        if real_time:
+            plot_filename = f'training_live_lambda_{lambda_val:.1f}.png'.replace('.', '_')
+        else:
+            plot_filename = f'training_metrics_lambda_{lambda_val:.1f}.png'.replace('.', '_')
+        
+        plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
         plt.close()
+        
+        if real_time:
+            print(f"📊 Real-time plot updated: {plot_filename}")
+
+    def plot_episode_reward(episode_num, reward, lambda_val):
+        """Quick plot update after each episode"""
+        if episode_num % 10 == 0 or episode_num <= 20:  # Plot every 10 episodes, or first 20
+            save_training_plots(lambda_val, real_time=True)
+    
+    def print_reward_progress(episode_num, reward, window_size=10):
+        """Print reward progress with moving average"""
+        if len(episode_rewards_list) >= window_size:
+            recent_avg = sum(episode_rewards_list[-window_size:]) / window_size
+            print(f"📈 Ep {episode_num}: Reward = {reward:.1f} | Avg(last {window_size}) = {recent_avg:.1f}")
+        else:
+            print(f"📈 Ep {episode_num}: Reward = {reward:.1f}")
+        
+        # Print reward milestone achievements
+        if reward > 800:
+            print(f"🌟 MILESTONE: Episode {episode_num} achieved {reward:.1f} reward!")
+        elif reward > 500:
+            print(f"⭐ GOOD: Episode {episode_num} achieved {reward:.1f} reward!")
+        elif reward > 0:
+            print(f"✓ POSITIVE: Episode {episode_num} achieved {reward:.1f} reward")
+        else:
+            print(f"📉 Episode {episode_num}: {reward:.1f} reward")
 
     print("--------------------------------------------------------------------------------------------")
     print("🚀 OPTIMIZED PPO TRAINING CONFIGURATION")
@@ -468,9 +524,15 @@ def main():
         success_flag = 1 if term_reason in ['goal_reached', 'goal_reached_and_stabilized'] else 0
         episode_success_list.append(success_flag)
 
+        # Print reward progress for every episode
+        print_reward_progress(i_episode, episode_reward, window_size=10)
+        
+        # Plot reward after each episode (with throttling)
+        plot_episode_reward(i_episode, episode_reward, ns_lambda)
+
         # Save model after every episode
         ppo_agent.save(os.path.join(checkpoint_path, weights_filename))
-        print(f"💾 Model saved after episode {i_episode} (Reward: {episode_reward:.1f})")
+        print(f"💾 Model saved after episode {i_episode}")
 
         # Track goal achievement (but model already saved per episode)
         if episode_reward > solved_reward:
@@ -492,16 +554,25 @@ def main():
                 print(f"✅ Model already saved per episode! Continuing training for more robustness...")
                 print("-" * 60)
 
-        # Print current episode stats (simplified for non-termination cases)
+        # Print current episode stats with reward highlighting
+        reward_status = "🎯" if success_flag == 1 else "❌"
         if not (done or truncated):
             if curriculum_learning:
-                print('Episode {} (Level {}) \t Length: {} \t Reward: {:.1f} \t Start: [{:.1f},{:.1f}] \t Goal: [{:.1f},{:.1f}]'.format(
-                    i_episode, current_curriculum_level, episode_length, episode_reward,
+                print('{} Episode {} (Level {}) \t Length: {} \t Reward: {:.1f} \t Start: [{:.1f},{:.1f}] \t Goal: [{:.1f},{:.1f}]'.format(
+                    reward_status, i_episode, current_curriculum_level, episode_length, episode_reward,
                     CONFIG['start_pos'][0], CONFIG['start_pos'][1], CONFIG['goal_pos'][0], CONFIG['goal_pos'][1]))
             else:
-                print('Episode {} \t Length: {} \t Reward: {:.1f} \t Start: [{:.1f},{:.1f}] \t Goal: [{:.1f},{:.1f}]'.format(
-                    i_episode, episode_length, episode_reward,
+                print('{} Episode {} \t Length: {} \t Reward: {:.1f} \t Start: [{:.1f},{:.1f}] \t Goal: [{:.1f},{:.1f}]'.format(
+                    reward_status, i_episode, episode_length, episode_reward,
                     CONFIG['start_pos'][0], CONFIG['start_pos'][1], CONFIG['goal_pos'][0], CONFIG['goal_pos'][1]))
+        
+        # Print immediate reward feedback
+        if episode_reward > 500:
+            print(f"🏆 Excellent performance! Reward: {episode_reward:.1f}")
+        elif episode_reward > 0:
+            print(f"✅ Positive reward: {episode_reward:.1f}")
+        elif episode_reward < -500:
+            print(f"⚠️  Poor performance: {episode_reward:.1f}")
         
         # Print periodic training progress summary (model already saved per episode)
         if i_episode % log_interval == 0:
@@ -544,8 +615,9 @@ def main():
                 print(f"📝 Current best: {best_reward:.1f}")
             print("=" * 50)
 
-            # Save metrics plot periodically
-            save_training_plots(ns_lambda)
+            # Save comprehensive metrics plot periodically
+            save_training_plots(ns_lambda, real_time=False)
+            print(f"📊 Comprehensive training plots updated at episode {i_episode}")
 
 if __name__ == '__main__':
     main()
