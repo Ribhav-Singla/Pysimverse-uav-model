@@ -1210,21 +1210,6 @@ class UAVEnv(gym.Env):
         min_obstacle_dist_norm = np.min(lidar_readings)
         min_obstacle_dist = min_obstacle_dist_norm * CONFIG['lidar_range']  # Convert back to meters
         
-        # Extract LIDAR features for goal detection (indices 25:36)
-        # Features: [min_lidar, mean_lidar, closest_dir_x, closest_dir_y, danger_level, 
-        #            front_clear, right_clear, back_clear, left_clear, goal_dir_x, goal_dir_y]
-        goal_direction_norm = obs[34:36]  # Last 2 elements are goal direction (normalized)
-        
-        # Calculate distance to boundary for boundary penalty
-        half_world = CONFIG['world_size'] / 2
-        distances_to_boundaries = np.array([
-            half_world + pos[0],  # Distance to west boundary
-            half_world - pos[0],  # Distance to east boundary
-            half_world + pos[1],  # Distance to south boundary
-            half_world - pos[1]   # Distance to north boundary
-        ])
-        distance_to_boundary = float(np.min(distances_to_boundaries))
-        
         # Initialize termination info
         termination_info = {
             'terminated': False,
@@ -1281,55 +1266,10 @@ class UAVEnv(gym.Env):
         elif min_obstacle_dist < 0.5:
             reward -= 1.0  # Warning zone - mild penalty
         
-        # === NEUROSYMBOLIC BALANCING REWARDS (Neural Learning) ===
-        # These rewards help the pure RL agent (λ=0) learn behaviors similar to symbolic rules
-        
-        # 4. BOUNDARY PENALTY: Static -1.0 reward when approaching boundary (< 0.8m)
-        # This mirrors the symbolic R2_BOUNDARY_SAFETY rule
-        if distance_to_boundary < 0.8:
-            reward -= 1.0  # Static penalty for approaching boundary
-        
-        # 5. LIDAR GOAL DETECTION: Angle-based reward when goal is detected via LIDAR
-        # Baseline: 1.5x the progress reward when path to goal is clear (1.5 × 10.0 = 15.0 per unit progress)
-        # This reward incentivizes moving toward goal when visible, matching symbolic R1_CLEAR_PATH
-        if self._is_goal_detected_by_lidar(lidar_readings, pos):
-            # Calculate angle alignment between velocity and goal direction
-            current_vel = vel[:2] / (np.linalg.norm(vel[:2]) + 1e-8) if np.linalg.norm(vel[:2]) > 0.01 else np.zeros(2)
-            goal_alignment = np.dot(current_vel, goal_direction_norm)  # Range: [-1, 1]
-            
-            # Convert alignment to positive reward: (1 + alignment) / 2 gives range [0, 1]
-            # Then multiply by 1.5x baseline (15.0) to get additional reward
-            lidar_goal_bonus = 15.0 * max(0, goal_alignment)  # Only reward positive alignment
-            reward += lidar_goal_bonus
-        
         # Update previous goal distance for next step
         self.prev_goal_dist = goal_dist
         
         return reward, termination_info
-    
-    def _is_goal_detected_by_lidar(self, lidar_readings: np.ndarray, pos: np.ndarray) -> bool:
-        """Check if goal is detectable by LIDAR (i.e., LIDAR ray aligned with goal direction is clear)"""
-        # Calculate goal direction angle from UAV position
-        goal_vector = CONFIG['goal_pos'][:2] - pos[:2]
-        goal_angle = np.arctan2(goal_vector[1], goal_vector[0])
-        
-        # Map goal angle to LIDAR ray index
-        # LIDAR rays are distributed evenly across 360 degrees
-        # Ray 0 points in direction angle 0 (East)
-        ray_index = int(round((goal_angle / (2 * np.pi)) * CONFIG['lidar_num_rays'])) % CONFIG['lidar_num_rays']
-        
-        # Check if the ray toward the goal is relatively clear (> 0.4 normalized distance)
-        # This means there's a line of sight to the goal
-        if lidar_readings[ray_index] > 0.4:
-            # Additionally check neighboring rays for robustness
-            neighbor_1 = (ray_index - 1) % CONFIG['lidar_num_rays']
-            neighbor_2 = (ray_index + 1) % CONFIG['lidar_num_rays']
-            
-            # Goal is detected if main ray and at least one neighbor are clear
-            neighbors_clear = bool(lidar_readings[neighbor_1] > 0.3 or lidar_readings[neighbor_2] > 0.3)
-            return neighbors_clear
-        
-        return False
 
     def _check_out_of_bounds(self, pos):
         """Check if UAV position is outside the world boundaries with strict enforcement"""
