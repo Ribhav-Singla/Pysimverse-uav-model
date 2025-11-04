@@ -311,6 +311,7 @@ def run_uav_simulation_headless(
         'success': False,
         'collision': False,
         'timeout': False,
+        'out_of_bounds': False,
         'steps': 0,
         'final_distance': 0.0,
         'path': []
@@ -331,7 +332,7 @@ def run_uav_simulation_headless(
     goal_reached = False
     
     try:
-        while not mission_complete and not collision_occurred and step_count < max_steps:
+        while not mission_complete and not collision_occurred and not results['out_of_bounds'] and step_count < max_steps:
             # Get current UAV state
             current_pos = data.qpos[:3].copy()
             current_vel = data.qvel[:3].copy()
@@ -529,7 +530,7 @@ def run_uav_simulation_headless(
             # Check for complete boundary violation
             if (abs(current_pos[0]) > half_world or abs(current_pos[1]) > half_world or 
                 current_pos[2] < 0.1 or current_pos[2] > 5.0):
-                collision_occurred = True
+                results['out_of_bounds'] = True
                 break
             
             # Check for obstacle collision
@@ -549,12 +550,14 @@ def run_uav_simulation_headless(
     results['final_distance'] = np.linalg.norm(current_pos - CUSTOM_CONFIG['goal_pos'])
     
     # Final status
-    if mission_complete and not collision_occurred:
+    if mission_complete and not collision_occurred and not results['out_of_bounds']:
         results['success'] = True
         print(f"✅ GOAL REACHED! Steps: {step_count}, Final dist: {results['final_distance']:.3f}m")
     elif collision_occurred:
         results['collision'] = True
         print(f"💥 COLLISION! Steps: {step_count}")
+    elif results['out_of_bounds']:
+        print(f"🚫 OUT OF BOUNDS! Steps: {step_count}")
     elif step_count >= max_steps:
         results['timeout'] = True
         print(f"⏰ TIMEOUT! Steps: {step_count}")
