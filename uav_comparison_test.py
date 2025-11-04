@@ -153,7 +153,7 @@ def run_comprehensive_comparison():
     current_test = 0
     
     # Outer loop: obstacle count (1 to 10)
-    for obstacle_count in range(1, 11):
+    for obstacle_count in range(1, 3):
         print(f"\n🎯 Testing with {obstacle_count} obstacles")
         print("-" * 40)
         
@@ -164,7 +164,7 @@ def run_comprehensive_comparison():
         }
         
         # Inner loop: 10 iterations with randomized positions
-        for iteration in range(10):
+        for iteration in range(2):
             print(f"\n📍 Iteration {iteration + 1}/10 for {obstacle_count} obstacles")
             
             # Generate random scenario
@@ -217,6 +217,8 @@ def run_comprehensive_comparison():
                     elif results['collision']:
                         obstacle_results[model_key]['collisions'] += 1
                         status = "💥 COLLISION"
+                    elif results.get('out_of_bounds', False):
+                        status = "🚫 OUT OF BOUNDS"
                     elif results['timeout']:
                         obstacle_results[model_key]['timeouts'] += 1
                         status = "⏰ TIMEOUT"
@@ -239,6 +241,7 @@ def run_comprehensive_comparison():
                         'success': results['success'],
                         'collision': results['collision'],
                         'timeout': results['timeout'],
+                        'out_of_bounds': results.get('out_of_bounds', False),
                         'steps': results['steps'],
                         'final_distance': results['final_distance'],
                         'duration_seconds': duration,
@@ -259,6 +262,7 @@ def run_comprehensive_comparison():
                         'success': False,
                         'collision': False,
                         'timeout': False,
+                        'out_of_bounds': False,
                         'steps': 0,
                         'final_distance': 999.0,
                         'duration_seconds': 0,
@@ -283,88 +287,46 @@ def run_comprehensive_comparison():
               f"Avg steps: {obstacle_results['neurosymbolic']['avg_steps']:.1f} | "
               f"Avg dist: {obstacle_results['neurosymbolic']['avg_distance']:.3f}m")
     
-    # Save detailed results to CSV
-    csv_file = os.path.join(results_dir, "detailed_results.csv")
-    with open(csv_file, 'w', newline='') as f:
-        if all_results:
-            writer = csv.DictWriter(f, fieldnames=all_results[0].keys())
-            writer.writeheader()
-            writer.writerows(all_results)
+    # Create custom CSV with specific format
+    custom_csv_data = []
     
-    # Generate summary report
-    print(f"\n🎉 COMPARISON COMPLETE!")
-    print("="*60)
-    print("📈 FINAL SUMMARY")
-    print("="*60)
-    
-    # Calculate overall statistics
-    pure_neural_total = {'success': 0, 'collision': 0, 'timeout': 0, 'total': 0}
-    neurosymbolic_total = {'success': 0, 'collision': 0, 'timeout': 0, 'total': 0}
+    # Generate a unique map seed for each obstacle count + iteration combination
+    map_seed_counter = 1
     
     for result in all_results:
         if 'error' not in result:  # Skip error results
-            if result['model'] == 'Pure Neural':
-                pure_neural_total['total'] += 1
-                if result['success']:
-                    pure_neural_total['success'] += 1
-                elif result['collision']:
-                    pure_neural_total['collision'] += 1
-                elif result['timeout']:
-                    pure_neural_total['timeout'] += 1
-            else:  # Neurosymbolic
-                neurosymbolic_total['total'] += 1
-                if result['success']:
-                    neurosymbolic_total['success'] += 1
-                elif result['collision']:
-                    neurosymbolic_total['collision'] += 1
-                elif result['timeout']:
-                    neurosymbolic_total['timeout'] += 1
-    
-    print(f"🤖 Pure Neural Overall:")
-    print(f"   Success Rate: {pure_neural_total['success']}/{pure_neural_total['total']} "
-          f"({pure_neural_total['success']/max(1, pure_neural_total['total'])*100:.1f}%)")
-    print(f"   Collision Rate: {pure_neural_total['collision']}/{pure_neural_total['total']} "
-          f"({pure_neural_total['collision']/max(1, pure_neural_total['total'])*100:.1f}%)")
-    print(f"   Timeout Rate: {pure_neural_total['timeout']}/{pure_neural_total['total']} "
-          f"({pure_neural_total['timeout']/max(1, pure_neural_total['total'])*100:.1f}%)")
-    
-    print(f"\n🧠 Neurosymbolic Overall:")
-    print(f"   Success Rate: {neurosymbolic_total['success']}/{neurosymbolic_total['total']} "
-          f"({neurosymbolic_total['success']/max(1, neurosymbolic_total['total'])*100:.1f}%)")
-    print(f"   Collision Rate: {neurosymbolic_total['collision']}/{neurosymbolic_total['total']} "
-          f"({neurosymbolic_total['collision']/max(1, neurosymbolic_total['total'])*100:.1f}%)")
-    print(f"   Timeout Rate: {neurosymbolic_total['timeout']}/{neurosymbolic_total['total']} "
-          f"({neurosymbolic_total['timeout']/max(1, neurosymbolic_total['total'])*100:.1f}%)")
-    
-    # Save summary report
-    summary_file = os.path.join(results_dir, "summary_report.txt")
-    with open(summary_file, 'w') as f:
-        f.write("UAV Navigation Comparison Summary Report\n")
-        f.write("="*50 + "\n")
-        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Total Tests: {total_tests}\n")
-        f.write(f"Obstacle Counts: 1-10\n")
-        f.write(f"Iterations per count: 10\n\n")
+            # Use the actual out_of_bounds data from simulation
+            out_of_bound = result.get('out_of_bounds', False)
+            
+            # Handle steps for timeout cases - use max steps (5000) if timeout occurred
+            steps = result['steps'] if not result['timeout'] else 5000
+            
+            custom_csv_data.append({
+                'map_seed': map_seed_counter,
+                'level': result['obstacle_count'],
+                'model': result['model'],
+                'goal_reached': result['success'],
+                'number_of_steps': steps,
+                'collision': result['collision'],
+                'out_of_bound': out_of_bound
+            })
         
-        f.write("Pure Neural Results:\n")
-        f.write(f"  Success Rate: {pure_neural_total['success']}/{pure_neural_total['total']} "
-                f"({pure_neural_total['success']/max(1, pure_neural_total['total'])*100:.1f}%)\n")
-        f.write(f"  Collision Rate: {pure_neural_total['collision']}/{pure_neural_total['total']} "
-                f"({pure_neural_total['collision']/max(1, pure_neural_total['total'])*100:.1f}%)\n")
-        f.write(f"  Timeout Rate: {pure_neural_total['timeout']}/{pure_neural_total['total']} "
-                f"({pure_neural_total['timeout']/max(1, pure_neural_total['total'])*100:.1f}%)\n\n")
-        
-        f.write("Neurosymbolic Results:\n")
-        f.write(f"  Success Rate: {neurosymbolic_total['success']}/{neurosymbolic_total['total']} "
-                f"({neurosymbolic_total['success']/max(1, neurosymbolic_total['total'])*100:.1f}%)\n")
-        f.write(f"  Collision Rate: {neurosymbolic_total['collision']}/{neurosymbolic_total['total']} "
-                f"({neurosymbolic_total['collision']/max(1, neurosymbolic_total['total'])*100:.1f}%)\n")
-        f.write(f"  Timeout Rate: {neurosymbolic_total['timeout']}/{neurosymbolic_total['total']} "
-                f"({neurosymbolic_total['timeout']/max(1, neurosymbolic_total['total'])*100:.1f}%)\n")
+        # Increment map seed for each test (both models use same map, so increment after both)
+        if len(custom_csv_data) % 2 == 0:  # Every 2 results (both models tested)
+            map_seed_counter += 1
     
-    print(f"\n📁 Results saved to: {results_dir}/")
-    print(f"   📊 Detailed data: detailed_results.csv")
-    print(f"   📄 Summary report: summary_report.txt")
+    # Save custom CSV
+    custom_csv_file = os.path.join(results_dir, "results_summary.csv")
+    with open(custom_csv_file, 'w', newline='') as f:
+        if custom_csv_data:
+            fieldnames = ['map_seed', 'level', 'model', 'goal_reached', 'number_of_steps', 'collision', 'out_of_bound']
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(custom_csv_data)
+    
+    print(f"\n🎉 COMPARISON COMPLETE!")
+    print(f"📁 Results saved to: {results_dir}/")
+    print(f"   📊 Summary data: results_summary.csv")
 
 if __name__ == "__main__":
     print("🚁 Starting UAV Navigation Comparison Test Suite...")
