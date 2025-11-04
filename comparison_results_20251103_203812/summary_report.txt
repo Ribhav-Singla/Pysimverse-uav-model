@@ -1,0 +1,16 @@
+UAV Navigation Comparison Summary Report
+==================================================
+Generated: 2025-11-03 20:40:51
+Total Tests: 200
+Obstacle Counts: 1-10
+Iterations per count: 10
+
+Pure Neural Results:
+  Success Rate: 2/4 (50.0%)
+  Collision Rate: 0/4 (0.0%)
+  Timeout Rate: 2/4 (50.0%)
+
+Neurosymbolic Results:
+  Success Rate: 4/4 (100.0%)
+  Collision Rate: 0/4 (0.0%)
+  Timeout Rate: 0/4 (0.0%)

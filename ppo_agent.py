@@ -85,7 +85,7 @@ class ActorCritic(nn.Module):
         
         # NaN protection for action mean
         if torch.isnan(action_mean).any():
-            print("🚨 WARNING: NaN detected in action_mean during act()! Replacing with zeros.")
+            # print("🚨 WARNING: NaN detected in action_mean during act()! Replacing with zeros.")
             action_mean = torch.zeros_like(action_mean)
         
         # Clamp action_mean to reasonable bounds
