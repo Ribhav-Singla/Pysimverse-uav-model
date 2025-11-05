@@ -27,9 +27,9 @@ class Memory:
 
 def main():
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Train UAV with RDR system')
-    parser.add_argument('--lambda', dest='ns_lambda', type=float, default=1.0,
-                        help='Neurosymbolic lambda value (0=pure RL, 1=RDR when available) (default: 1.0)')
+    parser = argparse.ArgumentParser(description='Train UAV with different PPO variants')
+    parser.add_argument('--ppo_type', type=str, choices=['vanilla', 'ar', 'ns'], default='ns',
+                        help='PPO variant to train: vanilla (basic PPO), ar (PPO with additional rewards), ns (neurosymbolic PPO) (default: ns)')
     parser.add_argument('--episodes', type=int, default=50,
                         help='Episodes per curriculum level (default: 50)')
     args = parser.parse_args()
@@ -64,11 +64,31 @@ def main():
     random_seed = 0
     #############################################
 
-    # Neurosymbolic config from command line arguments
-    ns_lambda = args.ns_lambda  # Use command line argument
-    use_neurosymbolic = (ns_lambda > 0.0)  # Enable neurosymbolic if lambda > 0
+    # Map PPO type to configuration
+    ppo_type = args.ppo_type
+    if ppo_type == 'vanilla':
+        # Vanilla PPO: lambda=0, no extra rewards
+        ns_lambda = 0.0
+        use_neurosymbolic = False
+        use_extra_rewards = False
+        print(f"🤖 Training Mode: VANILLA PPO (Basic rewards only)")
+    elif ppo_type == 'ar':
+        # AR PPO: lambda=0, with extra rewards (boundary penalties, goal detection)
+        ns_lambda = 0.0
+        use_neurosymbolic = False
+        use_extra_rewards = True
+        print(f"💰 Training Mode: AR PPO (Augmented Rewards)")
+    elif ppo_type == 'ns':
+        # NS PPO: lambda=1, neurosymbolic behavior
+        ns_lambda = 1.0
+        use_neurosymbolic = True
+        use_extra_rewards = False  # NS uses neurosymbolic logic instead
+        print(f"🧠 Training Mode: NS PPO (Neurosymbolic)")
+    
     ns_cfg = {
         'use_neurosymbolic': use_neurosymbolic,
+        'use_extra_rewards': use_extra_rewards,
+        'ppo_type': ppo_type,
         'lambda': ns_lambda,
         'warmup_steps': 100,
         'high_speed': 0.9,
@@ -87,14 +107,18 @@ def main():
     state_dim = env.observation_space.shape[0]
     action_dim = env.action_space.shape[0]
 
-    # checkpoint path with lambda value
+    # checkpoint path with PPO type
     checkpoint_path = "PPO_preTrained/{}/".format(env_name)
     if not os.path.exists(checkpoint_path):
         os.makedirs(checkpoint_path)
     
-    # Create weights filename with lambda value
-    lambda_str = f"lambda_{ns_lambda:.1f}".replace(".", "_")  # Convert 1.0 to "lambda_1_0"
-    weights_filename = f"PPO_UAV_Weights_{lambda_str}.pth"
+    # Create weights filename with PPO type
+    ppo_type_map = {
+        'vanilla': 'Vanilla_PPO',
+        'ar': 'AR_PPO', 
+        'ns': 'NS_PPO'
+    }
+    weights_filename = f"{ppo_type_map[ppo_type]}_UAV_Weights.pth"
 
     if random_seed:
         print("--------------------------------------------------------------------------------------------")
@@ -121,7 +145,7 @@ def main():
     episode_rewards_list = []
     episode_success_list = []  # 1 if goal reached this episode else 0
 
-    def save_training_plots(lambda_val, real_time=False):
+    def save_training_plots(ppo_type, real_time=False):
         if len(episode_indices) == 0:
             return
         
@@ -161,7 +185,7 @@ def main():
         
         plt.xlabel('Episode')
         plt.ylabel('Reward')
-        plt.title(f'Training Progress - Episode Rewards (λ={lambda_val})')
+        plt.title(f'Training Progress - Episode Rewards ({ppo_type.upper()} PPO)')
         
         # Dynamic y-axis range based on data
         if len(rewards_np) > 0:
@@ -195,11 +219,11 @@ def main():
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         
-        # Include lambda value in plot filename
+        # Include PPO type in plot filename
         if real_time:
-            plot_filename = f'training_live_lambda_{lambda_val:.1f}.png'.replace('.', '_')
+            plot_filename = f'training_live_{ppo_type}_ppo.png'
         else:
-            plot_filename = f'training_metrics_lambda_{lambda_val:.1f}.png'.replace('.', '_')
+            plot_filename = f'training_metrics_{ppo_type}_ppo.png'
         
         plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
         plt.close()
@@ -207,10 +231,10 @@ def main():
         if real_time:
             print(f"📊 Real-time plot updated: {plot_filename}")
 
-    def plot_episode_reward(episode_num, reward, lambda_val):
+    def plot_episode_reward(episode_num, reward, ppo_type):
         """Quick plot update after each episode"""
         if episode_num % 10 == 0 or episode_num <= 20:  # Plot every 10 episodes, or first 20
-            save_training_plots(lambda_val, real_time=True)
+            save_training_plots(ppo_type, real_time=True)
     
     def print_reward_progress(episode_num, reward, window_size=10):
         """Print reward progress with moving average"""
@@ -233,11 +257,16 @@ def main():
     print("--------------------------------------------------------------------------------------------")
     print("🚀 OPTIMIZED PPO TRAINING CONFIGURATION")
     print("--------------------------------------------------------------------------------------------")
-    print("🧭 NEUROSYMBOLIC CONFIGURATION:")
-    print(f"   - Lambda (λ): {ns_lambda} {'(RDR when available)' if ns_lambda >= 1.0 else '(Pure RL)' if ns_lambda == 0.0 else '(Hybrid mode)'}")
+    print("🧭 PPO VARIANT CONFIGURATION:")
+    print(f"   - PPO Type: {ppo_type.upper()}")
+    print(f"   - Lambda (λ): {ns_lambda}")
+    print(f"   - Extra Rewards: {'ENABLED' if use_extra_rewards else 'DISABLED'}")
     print(f"   - Weights filename: {weights_filename}")
     print(f"   - Episodes per level: {episodes_per_level_count}")
     print(f"   - RDR system: {'ENABLED' if use_neurosymbolic else 'DISABLED'}")
+    if use_extra_rewards:
+        print(f"   - Boundary penalty: -1 per step when within 1m of boundary")
+        print(f"   - LIDAR goal detection: 1.5x reward when moving toward detected goal")
     print()
     print("📊 OBSERVATION SPACE UPGRADE:")
     print(f"   - State Dimension: {state_dim}D (was 25D)")
@@ -251,12 +280,28 @@ def main():
     print(f"   - Actor Parameters: ~197K (was ~52K)")
     print(f"   - Critic Parameters: ~197K (was ~52K)")
     print()
-    print("💰 SIMPLIFIED REWARD STRUCTURE:")
-    print(f"   - Goal Reached: +1000 (was +100)")
-    print(f"   - Collision/OOB: -100 (unchanged)")
-    print(f"   - Progress Reward: 10.0 × progress (simplified)")
-    print(f"   - LIDAR Proximity Penalties: -0.5 to -5.0")
-    print(f"   - Safe Navigation Bonus: +0.5")
+    print("💰 REWARD STRUCTURE:")
+    if ppo_type == 'vanilla':
+        print(f"   - VANILLA PPO: Basic rewards only")
+        print(f"   - Goal Reached: +100")
+        print(f"   - Collision/OOB: -100")
+        print(f"   - Progress Reward: 10.0 × progress")
+        print(f"   - Step penalty: {CONFIG['step_reward']} per step")
+    elif ppo_type == 'ar':
+        print(f"   - AR PPO: Augmented rewards enabled")
+        print(f"   - Goal Reached: +100")
+        print(f"   - Collision/OOB: -100")
+        print(f"   - Progress Reward: 10.0 × progress")
+        print(f"   - Boundary Penalty: -1 per step when approaching boundary")
+        print(f"   - LIDAR Goal Detection: 1.5x reward when moving toward goal")
+        print(f"   - Step penalty: {CONFIG['step_reward']} per step")
+    else:  # ns
+        print(f"   - NS PPO: Neurosymbolic with RDR system")
+        print(f"   - Goal Reached: +100")
+        print(f"   - Collision/OOB: -100")
+        print(f"   - Progress Reward: 10.0 × progress")
+        print(f"   - Step penalty: {CONFIG['step_reward']} per step")
+        print(f"   - RDR rule-based actions when available")
     print()
     print("🎲 ADAPTIVE EXPLORATION (ACTION STD):")
     print(f"   - Initial: {initial_action_std} (100% exploration)")
@@ -528,7 +573,7 @@ def main():
         print_reward_progress(i_episode, episode_reward, window_size=10)
         
         # Plot reward after each episode (with throttling)
-        plot_episode_reward(i_episode, episode_reward, ns_lambda)
+        plot_episode_reward(i_episode, episode_reward, ppo_type)
 
         # Save model after every episode
         ppo_agent.save(os.path.join(checkpoint_path, weights_filename))

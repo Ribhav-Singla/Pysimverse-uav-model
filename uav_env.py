@@ -401,6 +401,8 @@ class UAVEnv(gym.Env):
         # Neurosymbolic configuration (optional, with safe defaults)
         self.ns_cfg = ns_cfg if ns_cfg is not None else {
             'use_neurosymbolic': False,
+            'use_extra_rewards': False,
+            'ppo_type': 'vanilla',
             'lambda': 0.0,
             'warmup_steps': 20,
             'high_speed': 0.9,
@@ -1225,6 +1227,10 @@ class UAVEnv(gym.Env):
         # Initialize reward
         reward = 0.0
         
+        # Get PPO type and extra rewards flag from configuration
+        ppo_type = self.ns_cfg.get('ppo_type', 'vanilla')
+        use_extra_rewards = self.ns_cfg.get('use_extra_rewards', False)
+        
         # === TERMINAL REWARDS (Strong Signals) ===
         
         # Check if UAV is out of bounds
@@ -1251,16 +1257,26 @@ class UAVEnv(gym.Env):
             print(f"✅ GOAL REACHED! Distance: {goal_dist:.3f}m")
             return reward, termination_info
         
-        # === STEP REWARDS (Simplified) ===
+        # === STEP REWARDS ===
         
-        # 1. Progress reward (primary driving force)
+        # 1. Progress reward (primary driving force) - ALWAYS APPLIED
         progress = self.prev_goal_dist - goal_dist
         reward = 10.0 * progress  # Scaled up for significance
         
-        # 2. Step penalty (living penalty to encourage efficiency)
-        reward += CONFIG['step_reward']  # -0.1 per step
+        # 2. Step penalty (living penalty to encourage efficiency) - ALWAYS APPLIED
+        reward += CONFIG['step_reward']  # -0.01 per step
         
-        # 3. Collision avoidance rewards (positive for safe navigation)
+        # === EXTRA REWARDS FOR AR_PPO ===
+        if use_extra_rewards:
+            # 3. Boundary approach penalty (-1 per step when approaching boundary)
+            boundary_penalty = self._get_boundary_approach_penalty(pos)
+            reward += boundary_penalty
+            
+            # 4. LIDAR goal detection reward (1.5x when moving toward detected goal)
+            goal_detection_reward = self._get_lidar_goal_detection_reward(pos, vel, lidar_readings)
+            reward += goal_detection_reward
+        
+        # 3. Basic collision avoidance (for all PPO types)
         if min_obstacle_dist < 0.3:
             reward -= 5.0  # Danger zone - penalty for being too close
         elif min_obstacle_dist < 0.5:
@@ -1270,6 +1286,61 @@ class UAVEnv(gym.Env):
         self.prev_goal_dist = goal_dist
         
         return reward, termination_info
+    
+    def _get_boundary_approach_penalty(self, pos):
+        """Calculate penalty when UAV approaches boundaries"""
+        half_world = CONFIG['world_size'] / 2
+        boundary_threshold = 1.0  # Start penalty when within 1m of boundary
+        
+        # Calculate distances to each boundary
+        distances_to_boundaries = [
+            half_world - pos[0],  # Distance to east boundary
+            pos[0] + half_world,  # Distance to west boundary
+            half_world - pos[1],  # Distance to north boundary
+            pos[1] + half_world   # Distance to south boundary
+        ]
+        
+        # Find minimum distance to any boundary
+        min_distance_to_boundary = min(distances_to_boundaries)
+        
+        # Apply penalty if approaching boundary
+        if min_distance_to_boundary < boundary_threshold:
+            penalty = -1.0 * (boundary_threshold - min_distance_to_boundary) / boundary_threshold
+            return penalty
+        
+        return 0.0
+    
+    def _get_lidar_goal_detection_reward(self, pos, vel, lidar_readings):
+        """Calculate reward when LIDAR detects goal and UAV moves toward it"""
+        # Check if goal is within LIDAR detection range
+        goal_vector = CONFIG['goal_pos'] - pos
+        goal_distance = np.linalg.norm(goal_vector)
+        
+        if goal_distance > CONFIG['lidar_range']:
+            return 0.0  # Goal not in LIDAR range
+        
+        # Calculate angle to goal (in radians)
+        goal_angle = np.arctan2(goal_vector[1], goal_vector[0])
+        if goal_angle < 0:
+            goal_angle += 2 * np.pi  # Convert to 0-2π range
+        
+        # Convert to LIDAR ray index (16 rays covering 360 degrees)
+        ray_index = int((goal_angle / (2 * np.pi)) * CONFIG['lidar_num_rays']) % CONFIG['lidar_num_rays']
+        
+        # Check if goal is "detected" by LIDAR (no obstacle blocking path to goal)
+        goal_lidar_reading = lidar_readings[ray_index] * CONFIG['lidar_range']  # Convert back to meters
+        
+        # Goal is "detected" if LIDAR reading in that direction is at least as far as goal
+        if goal_lidar_reading >= goal_distance * 0.9:  # 90% threshold for detection
+            # Calculate velocity component toward goal
+            velocity_toward_goal = np.dot(vel[:2], goal_vector[:2]) / (np.linalg.norm(goal_vector[:2]) + 1e-8)
+            
+            if velocity_toward_goal > 0:  # Moving toward goal
+                # 1.5x reward for moving toward detected goal
+                progress_toward_goal = velocity_toward_goal / goal_distance
+                return 1.5 * progress_toward_goal
+        
+        return 0.0
 
     def _check_out_of_bounds(self, pos):
         """Check if UAV position is outside the world boundaries with strict enforcement"""
