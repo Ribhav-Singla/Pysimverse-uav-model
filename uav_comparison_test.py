@@ -7,7 +7,7 @@ import time
 import os
 from datetime import datetime
 import csv
-from uav_render_headless import run_uav_simulation_headless
+from uav_render_parameterized import run_uav_simulation_headless
 
 def generate_random_obstacles(num_obstacles, world_size=8.0, obstacle_height=2.0):
     """Generate randomized obstacles for testing"""
@@ -115,8 +115,8 @@ def run_comprehensive_comparison():
     """Run comprehensive comparison between Pure Neural and Neurosymbolic approaches"""
     
     # Model paths
-    pure_neural_model = "PPO_preTrained/UAVEnv/PPO_UAV_Weights_lambda_0_0.pth"
-    neurosymbolic_model = "PPO_preTrained/UAVEnv/PPO_UAV_Weights_lambda_1_0.pth"
+    pure_neural_model = "PPO_preTrained/UAVEnv/Vanilla_PPO_UAV_Weights.pth"
+    neurosymbolic_model = "PPO_preTrained/UAVEnv/NS_PPO_UAV_Weights.pth"
     
     # Check if model files exist
     if not os.path.exists(pure_neural_model):

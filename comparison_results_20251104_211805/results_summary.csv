@@ -1,9 +1,0 @@
-map_seed,level,model,goal_reached,number_of_steps,collision,out_of_bound
-1,1,Pure Neural,True,1079,False,False
-1,1,Neurosymbolic,True,1758,False,False
-2,1,Pure Neural,False,3161,False,False
-2,1,Neurosymbolic,False,20,False,False
-3,2,Pure Neural,False,19,False,False
-3,2,Neurosymbolic,False,18,False,False
-4,2,Pure Neural,False,16,False,False
-4,2,Neurosymbolic,False,17,False,False
