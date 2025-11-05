@@ -315,7 +315,7 @@ def main():
     
     # Load trained model
     try:
-        model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights_lambda_0_0.pth"
+        model_path = "PPO_preTrained/UAVEnv/Vanilla_PPO_UAV_Weights.pth"
         if os.path.exists(model_path):
             ppo_agent.load(model_path)
             print(f"🤖 Trained PPO agent loaded successfully!")

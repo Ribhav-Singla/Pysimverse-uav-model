@@ -685,8 +685,8 @@ class PerformanceComparison:
             
         print("🤖 Checking available PPO models...")
         
-        self.neural_model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights_lambda_0_0.pth"
-        self.neurosymbolic_model_path = "PPO_preTrained/UAVEnv/PPO_UAV_Weights_lambda_1_0.pth"
+        self.neural_model_path = "PPO_preTrained/UAVEnv/Vanilla_PPO_UAV_Weights.pth"
+        self.neurosymbolic_model_path = "PPO_preTrained/UAVEnv/NS_PPO_UAV_Weights.pth"
         
         self.neural_available = os.path.exists(self.neural_model_path)
         self.neurosymbolic_available = os.path.exists(self.neurosymbolic_model_path)
