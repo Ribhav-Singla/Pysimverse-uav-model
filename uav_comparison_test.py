@@ -153,7 +153,7 @@ def run_comprehensive_comparison():
     current_test = 0
     
     # Outer loop: obstacle count (1 to 10)
-    for obstacle_count in range(1, 3):
+    for obstacle_count in range(1, 11):
         print(f"\n🎯 Testing with {obstacle_count} obstacles")
         print("-" * 40)
         
@@ -164,7 +164,7 @@ def run_comprehensive_comparison():
         }
         
         # Inner loop: 10 iterations with randomized positions
-        for iteration in range(2):
+        for iteration in range(10):
             print(f"\n📍 Iteration {iteration + 1}/10 for {obstacle_count} obstacles")
             
             # Generate random scenario
