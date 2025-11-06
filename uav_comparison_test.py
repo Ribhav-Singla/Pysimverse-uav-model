@@ -112,11 +112,12 @@ def check_position_safety(position, obstacles, safety_radius=0.8):
     return True
 
 def run_comprehensive_comparison():
-    """Run comprehensive comparison between Pure Neural and Neurosymbolic approaches"""
+    """Run comprehensive comparison between Pure Neural, Neurosymbolic, and AR_PPO approaches"""
     
     # Model paths
     pure_neural_model = "PPO_preTrained/UAVEnv/Vanilla_PPO_UAV_Weights.pth"
     neurosymbolic_model = "PPO_preTrained/UAVEnv/NS_PPO_UAV_Weights.pth"
+    ar_ppo_model = "PPO_preTrained/UAVEnv/AR_PPO_UAV_Weights.pth"
     
     # Check if model files exist
     if not os.path.exists(pure_neural_model):
@@ -124,6 +125,9 @@ def run_comprehensive_comparison():
         return
     if not os.path.exists(neurosymbolic_model):
         print(f"❌ Neurosymbolic model not found: {neurosymbolic_model}")
+        return
+    if not os.path.exists(ar_ppo_model):
+        print(f"❌ AR_PPO model not found: {ar_ppo_model}")
         return
     
     # Check if we're on macOS and warn about mjpython requirement
@@ -145,11 +149,11 @@ def run_comprehensive_comparison():
     print("="*60)
     print(f"📊 Testing obstacle counts: 1-10")
     print(f"🔄 Iterations per obstacle count: 10")
-    print(f"🤖 Models: Pure Neural vs Neurosymbolic")
+    print(f"🤖 Models: Pure Neural vs Neurosymbolic vs AR_PPO")
     print(f"📁 Results directory: {results_dir}")
     print("="*60)
     
-    total_tests = 10 * 10 * 2  # obstacle_counts * iterations * models
+    total_tests = 10 * 10 * 3  # obstacle_counts * iterations * models
     current_test = 0
     
     # Outer loop: obstacle count (1 to 10)
@@ -160,7 +164,8 @@ def run_comprehensive_comparison():
         obstacle_results = {
             'obstacle_count': obstacle_count,
             'pure_neural': {'successes': 0, 'collisions': 0, 'timeouts': 0, 'avg_steps': 0, 'avg_distance': 0},
-            'neurosymbolic': {'successes': 0, 'collisions': 0, 'timeouts': 0, 'avg_steps': 0, 'avg_distance': 0}
+            'neurosymbolic': {'successes': 0, 'collisions': 0, 'timeouts': 0, 'avg_steps': 0, 'avg_distance': 0},
+            'ar_ppo': {'successes': 0, 'collisions': 0, 'timeouts': 0, 'avg_steps': 0, 'avg_distance': 0}
         }
         
         # Inner loop: 10 iterations with randomized positions
@@ -190,8 +195,10 @@ def run_comprehensive_comparison():
             print(f"   🔵 Goal:  [{goal_pos[0]:.1f}, {goal_pos[1]:.1f}, {goal_pos[2]:.1f}]")
             print(f"   🧱 Obstacles: {len(obstacles)}")
             
-            # Test both models
-            for model_name, model_path in [("Pure Neural", pure_neural_model), ("Neurosymbolic", neurosymbolic_model)]:
+            # Test all three models
+            for model_name, model_path in [("Pure Neural", pure_neural_model), 
+                                           ("Neurosymbolic", neurosymbolic_model),
+                                           ("AR_PPO", ar_ppo_model)]:
                 current_test += 1
                 print(f"\n   🤖 Testing {model_name} ({current_test}/{total_tests})")
                 
@@ -209,7 +216,12 @@ def run_comprehensive_comparison():
                     
                     # Process results
                     duration = end_time - start_time
-                    model_key = 'pure_neural' if model_name == "Pure Neural" else 'neurosymbolic'
+                    if model_name == "Pure Neural":
+                        model_key = 'pure_neural'
+                    elif model_name == "Neurosymbolic":
+                        model_key = 'neurosymbolic'
+                    else:  # AR_PPO
+                        model_key = 'ar_ppo'
                     
                     if results['success']:
                         obstacle_results[model_key]['successes'] += 1
@@ -272,7 +284,7 @@ def run_comprehensive_comparison():
                     all_results.append(detailed_result)
         
         # Calculate averages for this obstacle count
-        for model_key in ['pure_neural', 'neurosymbolic']:
+        for model_key in ['pure_neural', 'neurosymbolic', 'ar_ppo']:
             if obstacle_results[model_key]['successes'] + obstacle_results[model_key]['collisions'] + obstacle_results[model_key]['timeouts'] > 0:
                 total_runs = 10
                 obstacle_results[model_key]['avg_steps'] /= total_runs
@@ -286,6 +298,9 @@ def run_comprehensive_comparison():
         print(f"   Neurosymbolic:  {obstacle_results['neurosymbolic']['successes']}/10 success | "
               f"Avg steps: {obstacle_results['neurosymbolic']['avg_steps']:.1f} | "
               f"Avg dist: {obstacle_results['neurosymbolic']['avg_distance']:.3f}m")
+        print(f"   AR_PPO:         {obstacle_results['ar_ppo']['successes']}/10 success | "
+              f"Avg steps: {obstacle_results['ar_ppo']['avg_steps']:.1f} | "
+              f"Avg dist: {obstacle_results['ar_ppo']['avg_distance']:.3f}m")
     
     # Create custom CSV with specific format
     custom_csv_data = []
@@ -311,8 +326,8 @@ def run_comprehensive_comparison():
                 'out_of_bound': out_of_bound
             })
         
-        # Increment map seed for each test (both models use same map, so increment after both)
-        if len(custom_csv_data) % 2 == 0:  # Every 2 results (both models tested)
+        # Increment map seed for each test (all three models use same map, so increment after all three)
+        if len(custom_csv_data) % 3 == 0:  # Every 3 results (all three models tested)
             map_seed_counter += 1
     
     # Save custom CSV

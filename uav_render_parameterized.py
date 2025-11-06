@@ -24,7 +24,7 @@ def run_uav_simulation_headless(
     collision_distance=None,
     lidar_num_rays=None,
     lidar_max_range=None,
-    max_steps=5000
+    max_steps=20000
 ):
     """
     Run UAV simulation headless (without viewer) with custom parameters.
