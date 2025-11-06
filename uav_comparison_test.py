@@ -157,7 +157,7 @@ def run_comprehensive_comparison():
     current_test = 0
     
     # Outer loop: obstacle count (1 to 10)
-    for obstacle_count in range(1, 11):
+    for obstacle_count in range(1, 16):
         print(f"\n🎯 Testing with {obstacle_count} obstacles")
         print("-" * 40)
         

@@ -1,0 +1,451 @@
+map_seed,level,model,goal_reached,number_of_steps,collision,out_of_bound
+1,1,Pure Neural,False,5000,False,False
+1,1,Neurosymbolic,True,1817,False,False
+1,1,AR_PPO,True,4926,False,False
+2,1,Pure Neural,False,5000,False,False
+2,1,Neurosymbolic,True,1511,False,False
+2,1,AR_PPO,False,5000,False,False
+3,1,Pure Neural,False,5000,False,False
+3,1,Neurosymbolic,True,1078,False,False
+3,1,AR_PPO,True,845,False,False
+4,1,Pure Neural,True,431,False,False
+4,1,Neurosymbolic,True,834,False,False
+4,1,AR_PPO,True,320,False,False
+5,1,Pure Neural,True,292,False,False
+5,1,Neurosymbolic,True,1169,False,False
+5,1,AR_PPO,True,315,False,False
+6,1,Pure Neural,True,1241,False,False
+6,1,Neurosymbolic,True,1483,False,False
+6,1,AR_PPO,True,2710,False,False
+7,1,Pure Neural,False,5000,False,False
+7,1,Neurosymbolic,True,819,False,False
+7,1,AR_PPO,True,487,False,False
+8,1,Pure Neural,True,369,False,False
+8,1,Neurosymbolic,True,787,False,False
+8,1,AR_PPO,True,329,False,False
+9,1,Pure Neural,False,5000,False,False
+9,1,Neurosymbolic,True,1438,False,False
+9,1,AR_PPO,False,5000,False,False
+10,1,Pure Neural,True,2584,False,False
+10,1,Neurosymbolic,True,1396,False,False
+10,1,AR_PPO,False,5000,False,False
+11,2,Pure Neural,True,15425,False,False
+11,2,Neurosymbolic,True,1068,False,False
+11,2,AR_PPO,False,5000,False,False
+12,2,Pure Neural,False,5000,False,False
+12,2,Neurosymbolic,True,2892,False,False
+12,2,AR_PPO,False,5000,False,False
+13,2,Pure Neural,False,5000,False,False
+13,2,Neurosymbolic,True,741,False,False
+13,2,AR_PPO,False,5000,False,False
+14,2,Pure Neural,False,5000,False,False
+14,2,Neurosymbolic,True,767,False,False
+14,2,AR_PPO,True,470,False,False
+15,2,Pure Neural,False,5000,False,False
+15,2,Neurosymbolic,True,784,False,False
+15,2,AR_PPO,True,491,False,False
+16,2,Pure Neural,False,5000,False,False
+16,2,Neurosymbolic,True,2514,False,False
+16,2,AR_PPO,False,5000,False,False
+17,2,Pure Neural,True,969,False,False
+17,2,Neurosymbolic,True,1240,False,False
+17,2,AR_PPO,True,665,False,False
+18,2,Pure Neural,True,14157,False,False
+18,2,Neurosymbolic,True,1814,False,False
+18,2,AR_PPO,False,5000,False,False
+19,2,Pure Neural,True,711,False,False
+19,2,Neurosymbolic,True,1301,False,False
+19,2,AR_PPO,False,5000,False,False
+20,2,Pure Neural,False,5000,False,False
+20,2,Neurosymbolic,True,1920,False,False
+20,2,AR_PPO,False,5000,False,False
+21,3,Pure Neural,False,5000,False,False
+21,3,Neurosymbolic,True,576,False,False
+21,3,AR_PPO,True,567,False,False
+22,3,Pure Neural,False,5000,False,False
+22,3,Neurosymbolic,True,1421,False,False
+22,3,AR_PPO,True,569,False,False
+23,3,Pure Neural,False,5000,False,False
+23,3,Neurosymbolic,True,793,False,False
+23,3,AR_PPO,True,636,False,False
+24,3,Pure Neural,True,17537,False,False
+24,3,Neurosymbolic,True,3246,False,False
+24,3,AR_PPO,True,657,False,False
+25,3,Pure Neural,False,5000,False,False
+25,3,Neurosymbolic,True,1216,False,False
+25,3,AR_PPO,False,5000,False,False
+26,3,Pure Neural,False,5000,False,False
+26,3,Neurosymbolic,True,1408,False,False
+26,3,AR_PPO,False,5000,False,False
+27,3,Pure Neural,True,5942,False,False
+27,3,Neurosymbolic,True,2131,False,False
+27,3,AR_PPO,False,5000,False,False
+28,3,Pure Neural,True,1495,False,False
+28,3,Neurosymbolic,True,3276,False,False
+28,3,AR_PPO,False,5000,False,False
+29,3,Pure Neural,False,5000,False,False
+29,3,Neurosymbolic,True,665,False,False
+29,3,AR_PPO,False,5000,False,False
+30,3,Pure Neural,True,1119,False,False
+30,3,Neurosymbolic,True,1718,False,False
+30,3,AR_PPO,True,733,False,False
+31,4,Pure Neural,True,1121,False,False
+31,4,Neurosymbolic,True,1702,False,False
+31,4,AR_PPO,False,5000,False,False
+32,4,Pure Neural,False,5000,False,False
+32,4,Neurosymbolic,True,2348,False,False
+32,4,AR_PPO,False,5000,False,False
+33,4,Pure Neural,True,1142,False,False
+33,4,Neurosymbolic,True,978,False,False
+33,4,AR_PPO,False,5000,False,False
+34,4,Pure Neural,False,5000,False,False
+34,4,Neurosymbolic,True,2252,False,False
+34,4,AR_PPO,True,3053,False,False
+35,4,Pure Neural,False,5000,False,False
+35,4,Neurosymbolic,True,5973,False,False
+35,4,AR_PPO,True,3485,False,False
+36,4,Pure Neural,False,5000,False,False
+36,4,Neurosymbolic,True,1304,False,False
+36,4,AR_PPO,True,2978,False,False
+37,4,Pure Neural,True,576,False,False
+37,4,Neurosymbolic,True,1988,False,False
+37,4,AR_PPO,True,494,False,False
+38,4,Pure Neural,False,5000,False,False
+38,4,Neurosymbolic,True,2006,False,False
+38,4,AR_PPO,True,557,False,False
+39,4,Pure Neural,False,5000,False,False
+39,4,Neurosymbolic,True,3244,False,False
+39,4,AR_PPO,False,5000,False,False
+40,4,Pure Neural,True,18616,False,False
+40,4,Neurosymbolic,True,1725,False,False
+40,4,AR_PPO,False,5000,False,False
+41,5,Pure Neural,False,5000,False,False
+41,5,Neurosymbolic,True,1084,False,False
+41,5,AR_PPO,False,5000,False,False
+42,5,Pure Neural,True,813,False,False
+42,5,Neurosymbolic,True,2142,False,False
+42,5,AR_PPO,True,603,False,False
+43,5,Pure Neural,False,5000,False,False
+43,5,Neurosymbolic,True,2335,False,False
+43,5,AR_PPO,True,1003,False,False
+44,5,Pure Neural,True,967,False,False
+44,5,Neurosymbolic,True,900,False,False
+44,5,AR_PPO,False,5000,False,False
+45,5,Pure Neural,True,2911,False,False
+45,5,Neurosymbolic,True,3634,False,False
+45,5,AR_PPO,False,5000,False,False
+46,5,Pure Neural,False,5000,False,False
+46,5,Neurosymbolic,True,2237,False,False
+46,5,AR_PPO,True,1620,False,False
+47,5,Pure Neural,False,5000,False,False
+47,5,Neurosymbolic,True,1093,False,False
+47,5,AR_PPO,True,1158,False,False
+48,5,Pure Neural,False,5000,False,False
+48,5,Neurosymbolic,True,2076,False,False
+48,5,AR_PPO,False,5000,False,False
+49,5,Pure Neural,False,5000,False,False
+49,5,Neurosymbolic,True,1111,False,False
+49,5,AR_PPO,True,767,False,False
+50,5,Pure Neural,False,5000,False,False
+50,5,Neurosymbolic,True,2276,False,False
+50,5,AR_PPO,True,857,False,False
+51,6,Pure Neural,True,1255,False,False
+51,6,Neurosymbolic,True,3038,False,False
+51,6,AR_PPO,True,844,False,False
+52,6,Pure Neural,True,914,False,False
+52,6,Neurosymbolic,True,2002,False,False
+52,6,AR_PPO,True,676,False,False
+53,6,Pure Neural,False,5000,False,False
+53,6,Neurosymbolic,True,10820,False,False
+53,6,AR_PPO,True,614,False,False
+54,6,Pure Neural,True,264,False,False
+54,6,Neurosymbolic,True,2369,False,False
+54,6,AR_PPO,True,238,False,False
+55,6,Pure Neural,False,5000,False,False
+55,6,Neurosymbolic,True,2315,False,False
+55,6,AR_PPO,True,888,False,False
+56,6,Pure Neural,False,5000,False,False
+56,6,Neurosymbolic,True,813,False,False
+56,6,AR_PPO,True,2454,False,False
+57,6,Pure Neural,False,5000,False,False
+57,6,Neurosymbolic,True,1749,False,False
+57,6,AR_PPO,True,864,False,False
+58,6,Pure Neural,True,2041,False,False
+58,6,Neurosymbolic,True,2430,False,False
+58,6,AR_PPO,True,1622,False,False
+59,6,Pure Neural,False,5000,False,False
+59,6,Neurosymbolic,True,1382,False,False
+59,6,AR_PPO,False,5000,False,False
+60,6,Pure Neural,False,5000,False,False
+60,6,Neurosymbolic,True,1045,False,False
+60,6,AR_PPO,True,753,False,False
+61,7,Pure Neural,False,5000,False,False
+61,7,Neurosymbolic,True,1145,False,False
+61,7,AR_PPO,False,5000,False,False
+62,7,Pure Neural,False,5000,False,False
+62,7,Neurosymbolic,True,2817,False,False
+62,7,AR_PPO,False,5000,False,False
+63,7,Pure Neural,True,716,False,False
+63,7,Neurosymbolic,True,4538,False,False
+63,7,AR_PPO,False,5000,False,False
+64,7,Pure Neural,True,376,False,False
+64,7,Neurosymbolic,True,1454,False,False
+64,7,AR_PPO,True,340,False,False
+65,7,Pure Neural,True,5740,False,False
+65,7,Neurosymbolic,True,1116,False,False
+65,7,AR_PPO,False,5000,False,False
+66,7,Pure Neural,False,5000,False,False
+66,7,Neurosymbolic,True,1612,False,False
+66,7,AR_PPO,False,5000,False,False
+67,7,Pure Neural,True,772,False,False
+67,7,Neurosymbolic,True,979,False,False
+67,7,AR_PPO,True,443,False,False
+68,7,Pure Neural,True,526,False,False
+68,7,Neurosymbolic,True,1160,False,False
+68,7,AR_PPO,False,5000,False,False
+69,7,Pure Neural,True,4752,False,False
+69,7,Neurosymbolic,True,1241,False,False
+69,7,AR_PPO,True,777,False,False
+70,7,Pure Neural,False,5000,False,False
+70,7,Neurosymbolic,True,693,False,False
+70,7,AR_PPO,False,5000,False,False
+71,8,Pure Neural,False,55,True,False
+71,8,Neurosymbolic,True,2354,False,False
+71,8,AR_PPO,False,15,True,False
+72,8,Pure Neural,True,893,False,False
+72,8,Neurosymbolic,True,1351,False,False
+72,8,AR_PPO,True,681,False,False
+73,8,Pure Neural,True,10435,False,False
+73,8,Neurosymbolic,True,2208,False,False
+73,8,AR_PPO,False,5000,False,False
+74,8,Pure Neural,False,5000,False,False
+74,8,Neurosymbolic,True,6171,False,False
+74,8,AR_PPO,True,1008,False,False
+75,8,Pure Neural,True,499,False,False
+75,8,Neurosymbolic,True,663,False,False
+75,8,AR_PPO,True,426,False,False
+76,8,Pure Neural,False,5000,False,False
+76,8,Neurosymbolic,True,1361,False,False
+76,8,AR_PPO,False,5000,False,False
+77,8,Pure Neural,False,5000,False,False
+77,8,Neurosymbolic,True,3010,False,False
+77,8,AR_PPO,False,5000,False,False
+78,8,Pure Neural,True,677,False,False
+78,8,Neurosymbolic,True,1753,False,False
+78,8,AR_PPO,False,5000,False,False
+79,8,Pure Neural,False,5000,False,False
+79,8,Neurosymbolic,True,6009,False,False
+79,8,AR_PPO,True,6401,False,False
+80,8,Pure Neural,True,760,False,False
+80,8,Neurosymbolic,True,1230,False,False
+80,8,AR_PPO,True,590,False,False
+81,9,Pure Neural,True,361,False,False
+81,9,Neurosymbolic,True,1833,False,False
+81,9,AR_PPO,True,352,False,False
+82,9,Pure Neural,True,7454,False,False
+82,9,Neurosymbolic,True,2441,False,False
+82,9,AR_PPO,False,5000,False,False
+83,9,Pure Neural,True,1287,False,False
+83,9,Neurosymbolic,False,3102,True,False
+83,9,AR_PPO,False,5000,False,False
+84,9,Pure Neural,True,2490,False,False
+84,9,Neurosymbolic,True,2950,False,False
+84,9,AR_PPO,False,5000,False,False
+85,9,Pure Neural,False,5000,False,False
+85,9,Neurosymbolic,True,2945,False,False
+85,9,AR_PPO,True,11839,False,False
+86,9,Pure Neural,False,5000,False,False
+86,9,Neurosymbolic,True,2337,False,False
+86,9,AR_PPO,False,5000,False,False
+87,9,Pure Neural,True,558,False,False
+87,9,Neurosymbolic,True,2937,False,False
+87,9,AR_PPO,True,454,False,False
+88,9,Pure Neural,False,5000,False,False
+88,9,Neurosymbolic,True,917,False,False
+88,9,AR_PPO,True,525,False,False
+89,9,Pure Neural,False,5000,False,False
+89,9,Neurosymbolic,True,2728,False,False
+89,9,AR_PPO,False,4,True,False
+90,9,Pure Neural,False,5000,False,False
+90,9,Neurosymbolic,True,637,False,False
+90,9,AR_PPO,True,612,False,False
+91,10,Pure Neural,False,5000,False,False
+91,10,Neurosymbolic,True,2156,False,False
+91,10,AR_PPO,True,466,False,False
+92,10,Pure Neural,True,399,False,False
+92,10,Neurosymbolic,True,9465,False,False
+92,10,AR_PPO,True,322,False,False
+93,10,Pure Neural,True,1465,False,False
+93,10,Neurosymbolic,True,2440,False,False
+93,10,AR_PPO,False,5000,False,False
+94,10,Pure Neural,False,5000,False,False
+94,10,Neurosymbolic,True,2062,False,False
+94,10,AR_PPO,False,5000,False,False
+95,10,Pure Neural,True,1532,False,False
+95,10,Neurosymbolic,True,2054,False,False
+95,10,AR_PPO,False,5000,False,False
+96,10,Pure Neural,True,746,False,False
+96,10,Neurosymbolic,True,1150,False,False
+96,10,AR_PPO,False,5000,False,False
+97,10,Pure Neural,True,822,False,False
+97,10,Neurosymbolic,True,4133,False,False
+97,10,AR_PPO,False,5000,False,False
+98,10,Pure Neural,False,5000,False,False
+98,10,Neurosymbolic,True,2055,False,False
+98,10,AR_PPO,True,1431,False,False
+99,10,Pure Neural,True,1193,False,False
+99,10,Neurosymbolic,True,1959,False,False
+99,10,AR_PPO,False,171,True,False
+100,10,Pure Neural,False,5000,False,False
+100,10,Neurosymbolic,True,5353,False,False
+100,10,AR_PPO,False,5000,False,False
+101,11,Pure Neural,True,689,False,False
+101,11,Neurosymbolic,True,1193,False,False
+101,11,AR_PPO,True,665,False,False
+102,11,Pure Neural,True,860,False,False
+102,11,Neurosymbolic,True,2478,False,False
+102,11,AR_PPO,True,564,False,False
+103,11,Pure Neural,True,4139,False,False
+103,11,Neurosymbolic,True,3312,False,False
+103,11,AR_PPO,True,2690,False,False
+104,11,Pure Neural,False,5000,False,False
+104,11,Neurosymbolic,True,1549,False,False
+104,11,AR_PPO,False,1494,True,False
+105,11,Pure Neural,False,5000,False,False
+105,11,Neurosymbolic,True,1002,False,False
+105,11,AR_PPO,True,545,False,False
+106,11,Pure Neural,False,48,True,False
+106,11,Neurosymbolic,True,7196,False,False
+106,11,AR_PPO,False,22,True,False
+107,11,Pure Neural,False,5000,False,False
+107,11,Neurosymbolic,True,675,False,False
+107,11,AR_PPO,False,5000,False,False
+108,11,Pure Neural,False,5000,False,False
+108,11,Neurosymbolic,True,486,False,False
+108,11,AR_PPO,True,342,False,False
+109,11,Pure Neural,True,439,False,False
+109,11,Neurosymbolic,True,1410,False,False
+109,11,AR_PPO,True,319,False,False
+110,11,Pure Neural,False,5000,False,False
+110,11,Neurosymbolic,True,460,False,False
+110,11,AR_PPO,True,902,False,False
+111,12,Pure Neural,True,373,False,False
+111,12,Neurosymbolic,True,724,False,False
+111,12,AR_PPO,False,5000,False,False
+112,12,Pure Neural,True,1924,False,False
+112,12,Neurosymbolic,True,1662,False,False
+112,12,AR_PPO,False,5000,False,False
+113,12,Pure Neural,False,5000,False,False
+113,12,Neurosymbolic,True,1697,False,False
+113,12,AR_PPO,True,3877,False,False
+114,12,Pure Neural,False,5000,False,False
+114,12,Neurosymbolic,True,2628,False,False
+114,12,AR_PPO,False,5000,False,False
+115,12,Pure Neural,False,5000,False,False
+115,12,Neurosymbolic,True,936,False,False
+115,12,AR_PPO,True,678,False,False
+116,12,Pure Neural,False,5000,False,False
+116,12,Neurosymbolic,True,1761,False,False
+116,12,AR_PPO,True,613,False,False
+117,12,Pure Neural,False,5000,False,False
+117,12,Neurosymbolic,False,9751,True,False
+117,12,AR_PPO,False,5000,False,False
+118,12,Pure Neural,True,1350,False,False
+118,12,Neurosymbolic,True,3185,False,False
+118,12,AR_PPO,False,5000,False,False
+119,12,Pure Neural,True,4033,False,False
+119,12,Neurosymbolic,True,1466,False,False
+119,12,AR_PPO,False,5000,False,False
+120,12,Pure Neural,True,1283,False,False
+120,12,Neurosymbolic,True,5308,False,False
+120,12,AR_PPO,True,1966,False,False
+121,13,Pure Neural,True,692,False,False
+121,13,Neurosymbolic,True,4707,False,False
+121,13,AR_PPO,False,5000,False,False
+122,13,Pure Neural,False,5000,False,False
+122,13,Neurosymbolic,True,2493,False,False
+122,13,AR_PPO,True,18909,False,False
+123,13,Pure Neural,True,845,False,False
+123,13,Neurosymbolic,True,2598,False,False
+123,13,AR_PPO,False,5000,False,False
+124,13,Pure Neural,True,2359,False,False
+124,13,Neurosymbolic,True,1789,False,False
+124,13,AR_PPO,False,5000,False,False
+125,13,Pure Neural,False,5000,False,False
+125,13,Neurosymbolic,True,781,False,False
+125,13,AR_PPO,False,5000,False,False
+126,13,Pure Neural,False,5000,False,False
+126,13,Neurosymbolic,True,688,False,False
+126,13,AR_PPO,True,8421,False,False
+127,13,Pure Neural,True,7077,False,False
+127,13,Neurosymbolic,True,9493,False,False
+127,13,AR_PPO,False,5000,False,False
+128,13,Pure Neural,False,0,True,False
+128,13,Neurosymbolic,False,0,True,False
+128,13,AR_PPO,False,0,True,False
+129,13,Pure Neural,False,5000,False,False
+129,13,Neurosymbolic,True,1220,False,False
+129,13,AR_PPO,True,560,False,False
+130,13,Pure Neural,False,5000,False,False
+130,13,Neurosymbolic,True,903,False,False
+130,13,AR_PPO,True,485,False,False
+131,14,Pure Neural,False,5000,False,False
+131,14,Neurosymbolic,True,1044,False,False
+131,14,AR_PPO,True,787,False,False
+132,14,Pure Neural,False,5000,False,False
+132,14,Neurosymbolic,True,2404,False,False
+132,14,AR_PPO,True,917,False,False
+133,14,Pure Neural,True,2366,False,False
+133,14,Neurosymbolic,True,4048,False,False
+133,14,AR_PPO,True,1143,False,False
+134,14,Pure Neural,True,1332,False,False
+134,14,Neurosymbolic,True,3779,False,False
+134,14,AR_PPO,False,5000,False,False
+135,14,Pure Neural,False,5000,False,False
+135,14,Neurosymbolic,True,1240,False,False
+135,14,AR_PPO,True,1424,False,False
+136,14,Pure Neural,True,1187,False,False
+136,14,Neurosymbolic,True,2229,False,False
+136,14,AR_PPO,False,5000,False,False
+137,14,Pure Neural,True,581,False,False
+137,14,Neurosymbolic,True,2348,False,False
+137,14,AR_PPO,True,378,False,False
+138,14,Pure Neural,False,1270,True,False
+138,14,Neurosymbolic,True,1471,False,False
+138,14,AR_PPO,False,23,True,False
+139,14,Pure Neural,False,2010,True,False
+139,14,Neurosymbolic,False,6847,True,False
+139,14,AR_PPO,False,1403,True,False
+140,14,Pure Neural,False,5000,False,False
+140,14,Neurosymbolic,True,476,False,False
+140,14,AR_PPO,True,353,False,False
+141,15,Pure Neural,True,1228,False,False
+141,15,Neurosymbolic,True,2480,False,False
+141,15,AR_PPO,False,281,True,False
+142,15,Pure Neural,False,5000,False,False
+142,15,Neurosymbolic,False,80,True,False
+142,15,AR_PPO,False,5000,False,False
+143,15,Pure Neural,False,5000,False,False
+143,15,Neurosymbolic,True,2501,False,False
+143,15,AR_PPO,False,5000,False,False
+144,15,Pure Neural,False,66,True,False
+144,15,Neurosymbolic,False,8007,True,False
+144,15,AR_PPO,False,21,True,False
+145,15,Pure Neural,True,2214,False,False
+145,15,Neurosymbolic,True,4288,False,False
+145,15,AR_PPO,False,5000,False,False
+146,15,Pure Neural,False,5000,False,False
+146,15,Neurosymbolic,True,1051,False,False
+146,15,AR_PPO,True,1559,False,False
+147,15,Pure Neural,False,5000,False,False
+147,15,Neurosymbolic,True,4217,False,False
+147,15,AR_PPO,False,5000,False,False
+148,15,Pure Neural,False,5000,False,False
+148,15,Neurosymbolic,True,1936,False,False
+148,15,AR_PPO,False,5000,False,False
+149,15,Pure Neural,False,89,True,False
+149,15,Neurosymbolic,True,5181,False,False
+149,15,AR_PPO,False,33,True,False
+150,15,Pure Neural,False,1557,True,False
+150,15,Neurosymbolic,True,2073,False,False
+150,15,AR_PPO,False,26,True,False
