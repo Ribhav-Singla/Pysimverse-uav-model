@@ -661,7 +661,7 @@ def main():
             print("=" * 50)
 
             # Save comprehensive metrics plot periodically
-            save_training_plots(ns_lambda, real_time=False)
+            save_training_plots(ppo_type, real_time=False)
             print(f"📊 Comprehensive training plots updated at episode {i_episode}")
 
 if __name__ == '__main__':
