@@ -18,7 +18,7 @@
       <site name="motor4" pos="-0.06 -0.06 0" size="0.01"/>
       
       <!-- Depth camera sensor -->
-      <camera name="depth_camera" pos="0 0 -0.05" euler="0 90 0" fovy="90" mode="fixed"/>
+      <camera name="uav_depth_camera" pos="0.15 0 0" xyaxes="0 1 0 0 0 1" fovy="90" mode="fixed"/>
     </body>
     <geom name="test_obs_0" type="cylinder" size="0.11214019353254723 1.0" pos="-2.778372985504319 -2.856760694118668 1.0" rgba="0.5961726498307159 0.26066324637904414 0.19741001238325798 1.0"/>
     <geom name="test_obs_1" type="box" size="0.06603496900955225 0.05115953648635909 1.0" pos="-1.1615532923766785 1.1754310620671817 1.0" rgba="0.10595002043090905 0.6367580985283047 0.8084979914215115 1.0"/>
