@@ -24,7 +24,8 @@ def run_uav_simulation_headless(
     collision_distance=None,
     lidar_num_rays=None,
     lidar_max_range=None,
-    max_steps=20000
+    max_steps=20000,
+    return_trajectory=False
 ):
     """
     Run UAV simulation headless (without viewer) with custom parameters.
@@ -60,10 +61,12 @@ def run_uav_simulation_headless(
         Maximum LIDAR range (default: from ENV_CONFIG)
     max_steps : int, optional
         Maximum steps before timeout (default: 5000)
+    return_trajectory : bool, optional
+        If True, return detailed trajectory data with positions and velocities (default: False)
     
     Returns:
     --------
-    dict : Mission results including success status, steps taken, etc.
+    dict : Mission results including success status, steps taken, and optionally trajectory
     """
     
     # Create a custom CONFIG based on parameters
@@ -317,6 +320,9 @@ def run_uav_simulation_headless(
         'path': []
     }
     
+    # Trajectory data (only if requested)
+    trajectory_data = [] if return_trajectory else None
+    
     # Reset simulation
     mujoco.mj_resetData(model, data)
     
@@ -339,6 +345,15 @@ def run_uav_simulation_headless(
             
             # Store position for path tracking
             results['path'].append(current_pos.tolist())
+            
+            # Store detailed trajectory data if requested
+            if return_trajectory:
+                trajectory_data.append({
+                    'step': step_count,
+                    'position': current_pos.tolist(),
+                    'velocity': current_vel.tolist(),
+                    'goal_distance': float(np.linalg.norm(current_pos - CUSTOM_CONFIG['goal_pos']))
+                })
             
             # Update environment with current position (for LIDAR)
             temp_env.uav_pos = current_pos
@@ -548,6 +563,10 @@ def run_uav_simulation_headless(
     # Update results
     results['steps'] = step_count
     results['final_distance'] = np.linalg.norm(current_pos - CUSTOM_CONFIG['goal_pos'])
+    
+    # Add trajectory data if requested
+    if return_trajectory:
+        results['trajectory'] = trajectory_data
     
     # Final status
     if mission_complete and not collision_occurred and not results['out_of_bounds']:

@@ -1,0 +1,73 @@
+<mujoco model="complex_uav_env">
+  <compiler angle="degree" coordinate="local" inertiafromgeom="true"/>
+  <option integrator="RK4" timestep="0.01"/>
+  
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global offwidth="2560" offheight="1440"/>
+  </visual>
+  
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.1 0.2 0.3" rgb2="0.2 0.3 0.4" width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="1 1" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <!-- Ground plane -->
+    <geom name="ground" type="plane" size="4.0 4.0 0.1" material="grid"/>
+    <light name="light1" pos="0 0 4" dir="0 0 -1" diffuse="1 1 1"/>
+    
+    <!-- Start position marker (green) -->
+    <geom name="start_marker" type="cylinder" size="0.15 0.05" pos="-3.0 3.0 0.05" rgba="0 1 0 0.8"/>
+    <geom name="start_pole" type="box" size="0.03 0.03 0.4" pos="-3.0 3.0 0.4" rgba="0 1 0 1"/>
+    
+    <!-- Goal position marker (blue) -->
+    <geom name="goal_marker" type="cylinder" size="0.15 0.05" pos="0.020149988947511854 -1.6389590532931249 0.05" rgba="0 0 1 0.8"/>
+    <geom name="goal_pole" type="box" size="0.03 0.03 0.4" pos="0.020149988947511854 -1.6389590532931249 0.4" rgba="0 0 1 1"/>
+    
+    <!-- UAV starting position -->
+    <body name="chassis" pos="-3.0 3.0 1.0">
+      <joint type="free" name="root"/>
+      <geom type="box" size="0.12 0.12 0.02" rgba="1.0 0.0 0.0 1.0" mass="0.8"/>
+      
+      <!-- Propeller arms and motors -->
+      <geom type="box" size="0.08 0.01 0.005" pos="0 0 0.01" rgba="0.3 0.3 0.3 1"/>
+      <geom type="box" size="0.01 0.08 0.005" pos="0 0 0.01" rgba="0.3 0.3 0.3 1"/>
+      
+      <!-- Motor visual geometry -->
+      <geom type="cylinder" size="0.015 0.02" pos="0.08 0.08 0.015" rgba="0.2 0.2 0.2 1"/>
+      <geom type="cylinder" size="0.015 0.02" pos="-0.08 0.08 0.015" rgba="0.2 0.2 0.2 1"/>
+      <geom type="cylinder" size="0.015 0.02" pos="0.08 -0.08 0.015" rgba="0.2 0.2 0.2 1"/>
+      <geom type="cylinder" size="0.015 0.02" pos="-0.08 -0.08 0.015" rgba="0.2 0.2 0.2 1"/>
+      
+      <!-- Propellers -->
+      <geom type="cylinder" size="0.04 0.002" pos="0.08 0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
+      <geom type="cylinder" size="0.04 0.002" pos="-0.08 0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
+      <geom type="cylinder" size="0.04 0.002" pos="0.08 -0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
+      <geom type="cylinder" size="0.04 0.002" pos="-0.08 -0.08 0.035" rgba="0.7 0.7 0.7 0.8"/>
+      
+      <!-- Sites for motor force application -->
+      <site name="motor1" pos="0.08 0.08 0" size="0.01"/>
+      <site name="motor2" pos="-0.08 0.08 0" size="0.01"/>
+      <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
+      <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
+    </body>
+    <geom name="test_obs_0" type="box" size="0.1172397391020269 0.058820925445093895 1.0" pos="-0.9150713289968173 1.4407994044549355 1.0" rgba="0.6947980073885852 0.8495066972919435 0.5370083592733547 1.0"/>
+    <geom name="test_obs_1" type="cylinder" size="0.05258443857612019 1.0" pos="-3.4163493106193106 -0.6341107758923459 1.0" rgba="0.288546278120043 0.8709020463723929 0.7052605239437493 1.0"/>
+    <geom name="test_obs_2" type="box" size="0.054682348757225344 0.07617146245837056 1.0" pos="3.4310542310343526 -2.77551033901883 1.0" rgba="0.7339029603400625 0.21008489111043396 0.6078340309232015 1.0"/>
+    <geom name="test_obs_3" type="cylinder" size="0.05664802125778637 1.0" pos="-3.497788182531295 -3.179996639027127 1.0" rgba="0.328570917446239 0.8363660994868527 0.8265640923293742 1.0"/>
+    <geom name="test_obs_4" type="box" size="0.0792896554027901 0.09111164862197296 1.0" pos="-1.1722707677941488 3.075506889885454 1.0" rgba="0.6336957135685644 0.16542765888657485 0.22002465746903904 1.0"/>
+    <geom name="test_obs_5" type="cylinder" size="0.05704214938201561 1.0" pos="1.069428946571975 -2.6245817361519355 1.0" rgba="0.8820642003472314 0.4518204758853973 0.7262545376146977 1.0"/>
+    <geom name="test_obs_6" type="box" size="0.11992346453051897 0.06273504876638886 1.0" pos="-1.0897198993575312 -0.9283738545810412 1.0" rgba="0.7811562621619048 0.18329710932582632 0.5096950038689166 1.0"/>
+    <geom name="test_obs_7" type="box" size="0.0942384594090217 0.0963846029310485 1.0" pos="-0.7341422611344977 -2.6390826912863745 1.0" rgba="0.2588819446899159 0.7423762665923309 0.7636821183601085 1.0"/>
+  </worldbody>
+
+  <actuator>
+    <motor name="m1" gear="0 0 1 0 0 0" site="motor1"/>
+    <motor name="m2" gear="0 0 1 0 0 0" site="motor2"/>
+    <motor name="m3" gear="0 0 1 0 0 0" site="motor3"/>
+    <motor name="m4" gear="0 0 1 0 0 0" site="motor4"/>
+  </actuator>
+</mujoco>
