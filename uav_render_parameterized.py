@@ -22,8 +22,8 @@ def run_uav_simulation_headless(
     uav_flight_height=None,
     control_dt=None,
     collision_distance=None,
-    lidar_num_rays=None,
-    lidar_max_range=None,
+    depth_features_dim=None,
+    depth_max_range=None,
     max_steps=20000
 ):
     """
@@ -54,10 +54,10 @@ def run_uav_simulation_headless(
         Control timestep (default: from ENV_CONFIG)
     collision_distance : float, optional
         Collision detection distance (default: from ENV_CONFIG)
-    lidar_num_rays : int, optional
-        Number of LIDAR rays (default: from ENV_CONFIG)
-    lidar_max_range : float, optional
-        Maximum LIDAR range (default: from ENV_CONFIG)
+    depth_features_dim : int, optional
+        Number of depth sensor features (default: from ENV_CONFIG)
+    depth_max_range : float, optional
+        Maximum depth sensor range (default: from ENV_CONFIG)
     max_steps : int, optional
         Maximum steps before timeout (default: 5000)
     
@@ -80,10 +80,10 @@ def run_uav_simulation_headless(
         CUSTOM_CONFIG['control_dt'] = control_dt
     if collision_distance is not None:
         CUSTOM_CONFIG['collision_distance'] = collision_distance
-    if lidar_num_rays is not None:
-        CUSTOM_CONFIG['lidar_num_rays'] = lidar_num_rays
-    if lidar_max_range is not None:
-        CUSTOM_CONFIG['lidar_max_range'] = lidar_max_range
+    if depth_features_dim is not None:
+        CUSTOM_CONFIG['depth_features_dim'] = depth_features_dim
+    if depth_max_range is not None:
+        CUSTOM_CONFIG['depth_range'] = depth_max_range
     
     # Use provided obstacles
     obstacles = obstacle_positions[:obstacle_count] if len(obstacle_positions) > obstacle_count else obstacle_positions
@@ -363,40 +363,46 @@ def run_uav_simulation_headless(
             vel = current_vel
             goal_dist = CUSTOM_CONFIG['goal_pos'] - pos
             
-            # Get LIDAR readings
-            lidar_readings = temp_env._get_lidar_readings(pos)
+            # Get depth sensor readings
+            depth_readings = temp_env._get_depth_readings(pos)
             
-            # LIDAR feature engineering (same as training)
-            min_lidar = np.min(lidar_readings)
-            mean_lidar = np.mean(lidar_readings)
+            # Depth sensor feature engineering (same as training)
+            min_depth = np.min(depth_readings)
+            mean_depth = np.mean(depth_readings)
             
-            closest_idx = np.argmin(lidar_readings)
-            closest_angle = (2 * np.pi * closest_idx) / CUSTOM_CONFIG['lidar_num_rays']
+            closest_idx = np.argmin(depth_readings)
+            # For camera-like sensing, angle is relative to camera FOV
+            fov_rad = math.radians(ENV_CONFIG['depth_fov'])
+            if ENV_CONFIG['depth_features_dim'] == 1:
+                closest_angle = 0  # Forward direction
+            else:
+                angle_offset = (closest_idx / (ENV_CONFIG['depth_features_dim'] - 1) - 0.5) * fov_rad
+                closest_angle = angle_offset
             obstacle_direction = np.array([np.cos(closest_angle), np.sin(closest_angle)])
             
             danger_threshold = 0.36
-            num_close_obstacles = np.sum(lidar_readings < danger_threshold)
-            danger_level = num_close_obstacles / CUSTOM_CONFIG['lidar_num_rays']
+            num_close_obstacles = np.sum(depth_readings < danger_threshold)
+            danger_level = num_close_obstacles / ENV_CONFIG['depth_features_dim']
             
-            sector_size = len(lidar_readings) // 4
-            front_clear = np.mean(lidar_readings[0:sector_size])
-            right_clear = np.mean(lidar_readings[sector_size:2*sector_size])
-            back_clear = np.mean(lidar_readings[2*sector_size:3*sector_size])
-            left_clear = np.mean(lidar_readings[3*sector_size:4*sector_size])
+            sector_size = max(1, len(depth_readings) // 4)
+            left_clear = np.mean(depth_readings[0:sector_size]) if sector_size > 0 else mean_depth
+            center_left_clear = np.mean(depth_readings[sector_size:2*sector_size]) if 2*sector_size <= len(depth_readings) else mean_depth
+            center_right_clear = np.mean(depth_readings[2*sector_size:3*sector_size]) if 3*sector_size <= len(depth_readings) else mean_depth
+            right_clear = np.mean(depth_readings[3*sector_size:4*sector_size]) if 4*sector_size <= len(depth_readings) else mean_depth
             
             goal_direction_norm = goal_dist[:2] / (np.linalg.norm(goal_dist[:2]) + 1e-8)
             
-            # Combine LIDAR features
-            lidar_features = np.array([
-                min_lidar, mean_lidar,
+            # Combine depth sensor features
+            depth_features = np.array([
+                min_depth, mean_depth,
                 obstacle_direction[0], obstacle_direction[1],
                 danger_level,
-                front_clear, right_clear, back_clear, left_clear,
+                left_clear, center_left_clear, center_right_clear, right_clear,
                 goal_direction_norm[0], goal_direction_norm[1]
             ])
             
             # Create state vector
-            state = np.concatenate([pos, vel, goal_dist, lidar_readings, lidar_features])
+            state = np.concatenate([pos, vel, goal_dist, depth_readings, depth_features])
             state_tensor = torch.FloatTensor(state.reshape(1, -1))
             
             # Agent selects action

@@ -90,14 +90,14 @@ def test_reward_features():
     penalty = env._get_boundary_approach_penalty(pos_center)
     print(f"   ✅ Boundary approach penalty: {penalty:.3f} (center)")
     
-    # Test LIDAR goal detection reward
+    # Test depth sensor goal detection reward
     import numpy as np
     pos = np.array([0.0, 0.0, 1.0])
     vel = np.array([1.0, 1.0, 0.0])  # Moving toward goal
-    lidar_readings = np.ones(16) * 0.8  # Mock LIDAR readings (normalized)
+    depth_readings = np.ones(16) * 0.8  # Mock depth sensor readings (normalized)
     
-    goal_reward = env._get_lidar_goal_detection_reward(pos, vel, lidar_readings)
-    print(f"   ✅ LIDAR goal detection reward: {goal_reward:.3f}")
+    goal_reward = env._get_depth_goal_detection_reward(pos, vel, depth_readings)
+    print(f"   ✅ Depth sensor goal detection reward: {goal_reward:.3f}")
     
     env.close()
     print(f"   ✅ AR PPO reward features test PASSED")

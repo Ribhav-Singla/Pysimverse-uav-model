@@ -378,39 +378,39 @@ def main():
                 goal_dist = CONFIG['goal_pos'] - pos
                 
                 # Get LIDAR readings
-                lidar_readings = env._get_lidar_readings(pos)
+                depth_readings = env._get_depth_readings(pos)
                 
                 # LIDAR feature engineering (same as training)
-                min_lidar = np.min(lidar_readings)
-                mean_lidar = np.mean(lidar_readings)
+                min_depth = np.min(depth_readings)
+                mean_depth = np.mean(depth_readings)
                 
-                closest_idx = np.argmin(lidar_readings)
-                closest_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays']
+                closest_idx = np.argmin(depth_readings)
+                closest_angle = (2 * np.pi * closest_idx) / CONFIG['depth_features_dim']
                 obstacle_direction = np.array([np.cos(closest_angle), np.sin(closest_angle)])
                 
                 danger_threshold = 0.36
-                num_close_obstacles = np.sum(lidar_readings < danger_threshold)
-                danger_level = num_close_obstacles / CONFIG['lidar_num_rays']
+                num_close_obstacles = np.sum(depth_readings < danger_threshold)
+                danger_level = num_close_obstacles / CONFIG['depth_features_dim']
                 
-                sector_size = len(lidar_readings) // 4
-                front_clear = np.mean(lidar_readings[0:sector_size])
-                right_clear = np.mean(lidar_readings[sector_size:2*sector_size])
-                back_clear = np.mean(lidar_readings[2*sector_size:3*sector_size])
-                left_clear = np.mean(lidar_readings[3*sector_size:4*sector_size])
+                sector_size = max(1, len(depth_readings) // 4)
+                left_clear = np.mean(depth_readings[0:sector_size]) if sector_size > 0 else mean_depth
+                center_left_clear = np.mean(depth_readings[sector_size:2*sector_size]) if 2*sector_size <= len(depth_readings) else mean_depth
+                center_right_clear = np.mean(depth_readings[2*sector_size:3*sector_size]) if 3*sector_size <= len(depth_readings) else mean_depth
+                right_clear = np.mean(depth_readings[3*sector_size:4*sector_size]) if 4*sector_size <= len(depth_readings) else mean_depth
                 
                 goal_direction_norm = goal_dist[:2] / (np.linalg.norm(goal_dist[:2]) + 1e-8)
                 
-                # Combine LIDAR features
-                lidar_features = np.array([
-                    min_lidar, mean_lidar,
+                # Combine depth sensor features
+                depth_features = np.array([
+                    min_depth, mean_depth,
                     obstacle_direction[0], obstacle_direction[1],
                     danger_level,
-                    front_clear, right_clear, back_clear, left_clear,
+                    left_clear, center_left_clear, center_right_clear, right_clear,
                     goal_direction_norm[0], goal_direction_norm[1]
                 ])
                 
                 # Create state vector
-                state = np.concatenate([pos, vel, goal_dist, lidar_readings, lidar_features])
+                state = np.concatenate([pos, vel, goal_dist, depth_readings, depth_features])
                 state_tensor = torch.FloatTensor(state.reshape(1, -1))
                 
                 # Agent selects action

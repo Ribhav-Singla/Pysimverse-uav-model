@@ -53,6 +53,9 @@
       <site name="motor2" pos="-0.08 0.08 0" size="0.01"/>
       <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
       <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
+      
+      <!-- Depth camera sensor -->
+      <camera name="depth_camera" pos="0 0 -0.05" euler="0 90 0" fovy="90" mode="fixed"/>
     </body>
     <geom name="static_obs_0" type="box" size="0.2598506245133797 0.24718735039952314 1.0" pos="0.0 -2.666666666666667 1.0" rgba="0.545668511821507 0.5326843602851029 0.4714136041836875 1.0"/>
     <geom name="static_obs_1" type="box" size="0.5097215856573584 0.3344865980291905 1.0" pos="-2.666666666666667 0.0 1.0" rgba="0.4623854166754252 0.7742232053016128 0.10591800930484362 1.0"/>
@@ -263,6 +266,10 @@
     <geom name="trail_198" type="sphere" size="0.02" pos="0 0 -10" rgba="0 1 0 0.6" contype="0" conaffinity="0"/>
     <geom name="trail_199" type="sphere" size="0.02" pos="0 0 -10" rgba="0 1 0 0.6" contype="0" conaffinity="0"/>
   </worldbody>
+
+  <sensor>
+    <camera name="depth_sensor" camera="depth_camera"/>
+  </sensor>
 
   <actuator>
     <motor name="m1" gear="0 0 1 0 0 0" site="motor1"/>

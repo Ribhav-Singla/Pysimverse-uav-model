@@ -33,8 +33,10 @@ CONFIG = {
     'control_dt': 0.05,
     'max_steps': 20000,  # Max steps per episode
     'step_reward': -0.2,  # Living penalty per step
-    'lidar_range': 2.9,  # LIDAR maximum detection range
-    'lidar_num_rays': 16,  # Number of LIDAR rays (360 degrees)
+    'depth_range': 2.9,  # Depth camera maximum detection range
+    'depth_resolution': 64,  # Depth image resolution (64x64)
+    'depth_fov': 90,  # Field of view in degrees
+    'depth_features_dim': 16,  # Number of depth features to extract (similar to LIDAR rays)
 }
 
 class RDRRule:
@@ -428,9 +430,9 @@ class UAVEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
         
-        # Observation space: [pos(3), vel(3), goal_dist(3), lidar_readings(16), lidar_features(11)]
-        # LIDAR features: min, mean, closest_dir(2), danger_level, clearances(4), goal_alignment(2)
-        obs_dim = 3 + 3 + 3 + CONFIG['lidar_num_rays'] + 11
+        # Observation space: [pos(3), vel(3), goal_dist(3), depth_readings(16), depth_features(11)]
+        # Depth features: min, mean, closest_dir(2), danger_level, clearances(4), goal_alignment(2)
+        obs_dim = 3 + 3 + 3 + CONFIG['depth_features_dim'] + 11
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         
         # Action space: 3D velocity control (vx, vy, vz=0) - no Z-axis movement
@@ -655,7 +657,7 @@ class UAVEnv(gym.Env):
             c, s = np.cos(ang), np.sin(ang)
             return np.array([c*vec[0]-s*vec[1], s*vec[0]+c*vec[1], 0.0])
         rays = [ray_dir, rot(ray_dir, ang_margin), rot(ray_dir, -ang_margin)]
-        min_obs_dist = CONFIG['lidar_range']
+        min_obs_dist = CONFIG['depth_range']
         for rd in rays:
             for obs in self.obstacles:
                 obs_dist = self._ray_obstacle_intersection(pos, rd, obs)
@@ -673,9 +675,9 @@ class UAVEnv(gym.Env):
         # Prepare context for RDR system
         pos = self.data.qpos[:3]
         obs = self._get_obs()
-        lidar_readings = obs[9:25]  # LIDAR data
+        depth_readings = obs[9:9+CONFIG['depth_features_dim']]  # Depth sensor data
         
-        context = self._prepare_rdr_context(pos, lidar_readings, obs)
+        context = self._prepare_rdr_context(pos, depth_readings, obs)
         
         # Evaluate RDR system to get applicable rule
         applicable_rule = self.rdr_system.evaluate_rules(context)
@@ -695,14 +697,14 @@ class UAVEnv(gym.Env):
         
         return action
     
-    def _prepare_rdr_context(self, pos: np.ndarray, lidar_readings: np.ndarray, obs: np.ndarray) -> Dict[str, Any]:
+    def _prepare_rdr_context(self, pos: np.ndarray, depth_readings: np.ndarray, obs: np.ndarray) -> Dict[str, Any]:
         """Prepare context dictionary for RDR rule evaluation - simplified"""
         
         # Basic positioning
         goal_vector = CONFIG['goal_pos'] - pos
         
-        # LIDAR analysis - only minimum distance needed
-        min_obstacle_dist = float(np.min(lidar_readings) * CONFIG['lidar_range'])
+        # Depth sensor analysis - only minimum distance needed
+        min_obstacle_dist = float(np.min(depth_readings) * CONFIG['depth_range'])
         
         # Boundary analysis - only minimum distance needed
         half_world = CONFIG['world_size'] / 2
@@ -814,8 +816,8 @@ class UAVEnv(gym.Env):
         """Check if a specific (non-default) RDR rule is available for current state"""
         pos = self.data.qpos[:3]
         obs = self._get_obs()
-        lidar_readings = obs[9:25]  # LIDAR data
-        context = self._prepare_rdr_context(pos, lidar_readings, obs)
+        depth_readings = obs[9:9+CONFIG['depth_features_dim']]  # Depth sensor data
+        context = self._prepare_rdr_context(pos, depth_readings, obs)
         return self.rdr_system.has_specific_rule(context)
 
     def render(self):
@@ -1018,55 +1020,61 @@ class UAVEnv(gym.Env):
         vel = self.data.qvel[:3]
         goal_dist = CONFIG['goal_pos'] - pos
         
-        # Get LIDAR readings (normalized to [0, 1])
-        lidar_readings = self._get_lidar_readings(pos)
+        # Get depth sensor readings (normalized to [0, 1])
+        depth_readings = self._get_depth_readings(pos)
         
-        # === LIDAR FEATURE ENGINEERING ===
-        # Extract meaningful features from raw LIDAR data
+        # === DEPTH SENSOR FEATURE ENGINEERING ===
+        # Extract meaningful features from depth sensor data
         
         # 1. Minimum distance (closest obstacle)
-        min_lidar = np.min(lidar_readings)
+        min_depth = np.min(depth_readings)
         
         # 2. Mean distance (overall clearance)
-        mean_lidar = np.mean(lidar_readings)
+        mean_depth = np.mean(depth_readings)
         
         # 3. Direction to closest obstacle (unit vector)
-        closest_idx = np.argmin(lidar_readings)
-        closest_angle = (2 * np.pi * closest_idx) / CONFIG['lidar_num_rays']
+        closest_idx = np.argmin(depth_readings)
+        # For camera-like sensing, angle is relative to camera FOV
+        fov_rad = math.radians(CONFIG['depth_fov'])
+        if CONFIG['depth_features_dim'] == 1:
+            closest_angle = 0  # Forward direction
+        else:
+            angle_offset = (closest_idx / (CONFIG['depth_features_dim'] - 1) - 0.5) * fov_rad
+            closest_angle = angle_offset
         obstacle_direction = np.array([np.cos(closest_angle), np.sin(closest_angle)])
         
         # 4. Danger level (ratio of close obstacles)
         danger_threshold = 0.36  # 1.0m / 2.8m normalized
-        num_close_obstacles = np.sum(lidar_readings < danger_threshold)
-        danger_level = num_close_obstacles / CONFIG['lidar_num_rays']
+        num_close_obstacles = np.sum(depth_readings < danger_threshold)
+        danger_level = num_close_obstacles / CONFIG['depth_features_dim']
         
-        # 5. Directional clearance (front/right/back/left sectors)
-        sector_size = len(lidar_readings) // 4
-        front_clear = np.mean(lidar_readings[0:sector_size])
-        right_clear = np.mean(lidar_readings[sector_size:2*sector_size])
-        back_clear = np.mean(lidar_readings[2*sector_size:3*sector_size])
-        left_clear = np.mean(lidar_readings[3*sector_size:4*sector_size])
+        # 5. Directional clearance (left/center-left/center-right/right sectors for forward-facing camera)
+        sector_size = max(1, len(depth_readings) // 4)
+        left_clear = np.mean(depth_readings[0:sector_size]) if sector_size > 0 else mean_depth
+        center_left_clear = np.mean(depth_readings[sector_size:2*sector_size]) if 2*sector_size <= len(depth_readings) else mean_depth
+        center_right_clear = np.mean(depth_readings[2*sector_size:3*sector_size]) if 3*sector_size <= len(depth_readings) else mean_depth
+        right_clear = np.mean(depth_readings[3*sector_size:4*sector_size]) if 4*sector_size <= len(depth_readings) else mean_depth
         
         # 6. Goal direction alignment (unit vector toward goal)
         goal_direction_norm = goal_dist[:2] / (np.linalg.norm(goal_dist[:2]) + 1e-8)
         
-        # Combine all LIDAR features (11 dimensions)
-        lidar_features = np.array([
-            min_lidar,                    # 1D
-            mean_lidar,                   # 1D
+        # Combine all depth sensor features (11 dimensions)
+        depth_features = np.array([
+            min_depth,                    # 1D
+            mean_depth,                   # 1D  
             obstacle_direction[0],        # 1D
             obstacle_direction[1],        # 1D
             danger_level,                 # 1D
-            front_clear,                  # 1D
-            right_clear,                  # 1D
-            back_clear,                   # 1D
             left_clear,                   # 1D
+            center_left_clear,            # 1D
+            center_right_clear,           # 1D
+            right_clear,                  # 1D
             goal_direction_norm[0],       # 1D
             goal_direction_norm[1]        # 1D
         ])
         
         # Combine all observation components
-        obs = np.concatenate([pos, vel, goal_dist, lidar_readings, lidar_features])
+        obs = np.concatenate([pos, vel, goal_dist, depth_readings, depth_features])
         
         # NaN protection - critical for preventing training crashes
         if np.isnan(obs).any():
@@ -1081,20 +1089,54 @@ class UAVEnv(gym.Env):
         
         return obs
 
-    def _get_lidar_readings(self, pos):
-        """Generate LIDAR readings in 360 degrees around the UAV (normalized to [0,1])"""
-        lidar_readings = []
-        
-        # Define obstacle detection threshold (distance at which we consider obstacle "detected")
+    def _get_depth_readings(self, pos):
+        """Get depth sensor readings from MuJoCo depth camera (normalized to [0,1])"""
+        try:
+            # Initialize renderer for depth sensing
+            renderer = mujoco.Renderer(self.model, height=CONFIG['depth_resolution'], width=CONFIG['depth_resolution'])
+            
+            # Update scene with current state
+            renderer.update_scene(self.data, camera="depth_camera")
+            
+            # Render RGB image and extract depth from z-buffer
+            rgb_image = renderer.render()
+            
+            # Get depth buffer - this is a simple approximation
+            # In practice, you might need to use different MuJoCo APIs for true depth
+            depth_readings = self._simulate_depth_from_raycast(pos)
+            
+            renderer.close()
+            return np.array(depth_readings)
+            
+        except Exception as e:
+            print(f"Warning: Depth sensor failed, falling back to raycast: {e}")
+            # Fallback to raycast-based depth simulation
+            return np.array(self._simulate_depth_from_raycast(pos))
+    
+    def _simulate_depth_from_raycast(self, pos):
+        """Simulate depth sensor using raycast (similar to LIDAR but mimicking camera-like sensing)"""
+        depth_readings = []
         obstacle_detection_threshold = 1.5  # meters
         
-        for i in range(CONFIG['lidar_num_rays']):
-            # Calculate ray direction (360 degrees divided by number of rays)
-            angle = (2 * math.pi * i) / CONFIG['lidar_num_rays']
+        # Generate rays in a camera-like pattern rather than full 360 degrees
+        # Simulate a forward-facing depth camera with limited FOV
+        fov_rad = math.radians(CONFIG['depth_fov'])
+        center_angle = 0  # Forward direction
+        num_rays = CONFIG['depth_features_dim']
+        
+        for i in range(num_rays):
+            # Calculate ray direction within camera FOV
+            if num_rays == 1:
+                angle = center_angle
+            else:
+                # Distribute rays across FOV
+                angle_offset = (i / (num_rays - 1) - 0.5) * fov_rad
+                angle = center_angle + angle_offset
+            
             ray_dir = np.array([math.cos(angle), math.sin(angle), 0])
             
             # Cast ray and find closest obstacle or boundary
-            min_distance = CONFIG['lidar_range']
+            min_distance = CONFIG['depth_range']
             closest_obstacle = None
             
             # Check boundary intersection
@@ -1112,7 +1154,7 @@ class UAVEnv(gym.Env):
             # Log obstacle detection if obstacle is within detection threshold
             if (closest_obstacle is not None and 
                 min_distance < obstacle_detection_threshold and 
-                min_distance < CONFIG['lidar_range']):
+                min_distance < CONFIG['depth_range']):
                 
                 # Get current velocity from the data
                 current_vel = self.data.qvel[:3].copy()
@@ -1129,16 +1171,16 @@ class UAVEnv(gym.Env):
                     new_vel=current_vel
                 )
             
-            # Normalize LIDAR reading to [0, 1] range
-            normalized_distance = min_distance / CONFIG['lidar_range']
-            lidar_readings.append(normalized_distance)
+            # Normalize depth reading to [0, 1] range
+            normalized_distance = min_distance / CONFIG['depth_range']
+            depth_readings.append(normalized_distance)
         
-        return np.array(lidar_readings)
+        return depth_readings
 
     def _ray_boundary_intersection(self, pos, ray_dir):
         """Calculate intersection of ray with world boundaries"""
         half_world = CONFIG['world_size'] / 2
-        min_dist = CONFIG['lidar_range']
+        min_dist = CONFIG['depth_range']
         
         # Check intersection with each boundary
         boundaries = [
@@ -1169,7 +1211,7 @@ class UAVEnv(gym.Env):
     def _ray_obstacle_intersection(self, pos, ray_dir, obstacle):
         """Calculate intersection of ray with obstacle"""
         obs_pos = np.array(obstacle['pos'])
-        min_dist = CONFIG['lidar_range']
+        min_dist = CONFIG['depth_range']
         
         if obstacle['shape'] == 'box':
             # Simple box intersection (approximate)
@@ -1207,12 +1249,10 @@ class UAVEnv(gym.Env):
         vel = obs[3:6]
         goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
         
-        # Extract LIDAR readings (normalized, indices 9:25)
-        lidar_readings = obs[9:25]
-        min_obstacle_dist_norm = np.min(lidar_readings)
-        min_obstacle_dist = min_obstacle_dist_norm * CONFIG['lidar_range']  # Convert back to meters
-        
-        # Initialize termination info
+        # Extract depth sensor readings (normalized)
+        depth_readings = obs[9:9+CONFIG['depth_features_dim']]
+        min_obstacle_dist_norm = np.min(depth_readings)
+        min_obstacle_dist = min_obstacle_dist_norm * CONFIG['depth_range']  # Convert back to meters        # Initialize termination info
         termination_info = {
             'terminated': False,
             'termination_reason': 'none',
@@ -1273,7 +1313,7 @@ class UAVEnv(gym.Env):
             reward += boundary_penalty
             
             # 4. LIDAR goal detection reward (1.5x when moving toward detected goal)
-            goal_detection_reward = self._get_lidar_goal_detection_reward(pos, vel, lidar_readings)
+            goal_detection_reward = self._get_depth_goal_detection_reward(pos, vel, depth_readings)
             reward += goal_detection_reward
         
         # 3. Basic collision avoidance (for all PPO types)
@@ -1310,28 +1350,33 @@ class UAVEnv(gym.Env):
         
         return 0.0
     
-    def _get_lidar_goal_detection_reward(self, pos, vel, lidar_readings):
-        """Calculate reward when LIDAR detects goal and UAV moves toward it"""
-        # Check if goal is within LIDAR detection range
+    def _get_depth_goal_detection_reward(self, pos, vel, depth_readings):
+        """Calculate reward when depth sensor detects goal and UAV moves toward it"""
+        # Check if goal is within depth sensor detection range
         goal_vector = CONFIG['goal_pos'] - pos
         goal_distance = np.linalg.norm(goal_vector)
         
-        if goal_distance > CONFIG['lidar_range']:
-            return 0.0  # Goal not in LIDAR range
+        if goal_distance > CONFIG['depth_range']:
+            return 0.0  # Goal not in depth sensor range
         
-        # Calculate angle to goal (in radians)
+        # Calculate angle to goal (in radians) - relative to forward direction
         goal_angle = np.arctan2(goal_vector[1], goal_vector[0])
-        if goal_angle < 0:
-            goal_angle += 2 * np.pi  # Convert to 0-2π range
         
-        # Convert to LIDAR ray index (16 rays covering 360 degrees)
-        ray_index = int((goal_angle / (2 * np.pi)) * CONFIG['lidar_num_rays']) % CONFIG['lidar_num_rays']
+        # Check if goal is within camera FOV
+        fov_rad = math.radians(CONFIG['depth_fov'])
+        if abs(goal_angle) > fov_rad / 2:
+            return 0.0  # Goal not within camera FOV
         
-        # Check if goal is "detected" by LIDAR (no obstacle blocking path to goal)
-        goal_lidar_reading = lidar_readings[ray_index] * CONFIG['lidar_range']  # Convert back to meters
+        # Convert to depth sensor ray index 
+        angle_offset = goal_angle / (fov_rad / 2)  # Normalize to [-1, 1]
+        ray_index = int((angle_offset + 1) * CONFIG['depth_features_dim'] / 2)
+        ray_index = max(0, min(ray_index, CONFIG['depth_features_dim'] - 1))
         
-        # Goal is "detected" if LIDAR reading in that direction is at least as far as goal
-        if goal_lidar_reading >= goal_distance * 0.9:  # 90% threshold for detection
+        # Check if goal is "detected" by depth sensor (no obstacle blocking path to goal)
+        goal_depth_reading = depth_readings[ray_index] * CONFIG['depth_range']  # Convert back to meters
+        
+        # Goal is "detected" if depth reading in that direction is at least as far as goal
+        if goal_depth_reading >= goal_distance * 0.9:  # 90% threshold for detection
             # Calculate velocity component toward goal
             velocity_toward_goal = np.dot(vel[:2], goal_vector[:2]) / (np.linalg.norm(goal_vector[:2]) + 1e-8)
             

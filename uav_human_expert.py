@@ -156,7 +156,7 @@ CONFIG = {
     'control_dt': 0.05,
     'boundary_penalty': -100,
     'lidar_range': 2.9,
-    'lidar_num_rays': 16,
+    'depth_features_dim': 16,
     'step_reward': -0.01,
     
     # Render-specific parameters (do not affect agent logic)
@@ -397,8 +397,8 @@ def get_lidar_readings(pos, obstacles):
     """Generate LIDAR readings in 360 degrees around the UAV - MUST match training"""
     lidar_readings = []
     
-    for i in range(CONFIG['lidar_num_rays']):
-        angle = (2 * math.pi * i) / CONFIG['lidar_num_rays']
+    for i in range(CONFIG['depth_features_dim']):
+        angle = (2 * math.pi * i) / CONFIG['depth_features_dim']
         ray_dir = np.array([math.cos(angle), math.sin(angle), 0])
         
         min_distance = CONFIG['lidar_range']
