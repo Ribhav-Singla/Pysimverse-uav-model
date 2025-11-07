@@ -460,9 +460,17 @@ class UAVEnv(gym.Env):
             depth_dim = CONFIG['depth_features_dim']
             print(f"📡 Raycast Depth Processing: {depth_dim} simulated depth readings")
         
-        # Observation space: [pos(3), vel(3), goal_dist(3), depth_features(depth_dim), extra_features(11)]
-        # Extra features: min, mean, closest_dir(2), danger_level, clearances(4), goal_alignment(2)
-        obs_dim = 3 + 3 + 3 + depth_dim + 11
+        # Observation space calculation depends on depth processing mode
+        if CONFIG['use_cnn_depth']:
+            # CNN mode: [pos(3), vel(3), goal_dist(3), cnn_features(depth_dim), navigation_features(5)]
+            # Navigation features: goal_distance, goal_direction(2), altitude, speed
+            extra_features_dim = 5
+        else:
+            # Raycast mode: [pos(3), vel(3), goal_dist(3), depth_readings(depth_dim), engineered_features(11)]
+            # Engineered features: min, mean, closest_dir(2), danger_level, clearances(4), goal_alignment(2)
+            extra_features_dim = 11
+        
+        obs_dim = 3 + 3 + 3 + depth_dim + extra_features_dim
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
         
         # Action space: 3D velocity control (vx, vy, vz=0) - no Z-axis movement
