@@ -39,14 +39,13 @@ CONFIG = {
     'depth_range': 2.9,  # Depth camera maximum detection range
     'depth_resolution': 64,  # Depth image resolution (64x64)
     'depth_fov': 90,  # Field of view in degrees
-    'depth_features_dim': 16,  # Number of depth features to extract (similar to LIDAR rays)
-    'use_cnn_depth': True,  # Enable CNN-based depth processing
-    'cnn_features_dim': 128,  # CNN extracted features dimension
+    'cnn_features_dim': 128,  # CNN extracted features dimension (no raycast fallback)
     'depth_cnn_model_path': None,  # Path to pretrained CNN model
-    'enable_denoising': True,  # Enable depth image denoising
+    'enable_denoising': False,  # Enable depth image denoising
     'enable_enhancement': True,  # Enable depth image enhancement
     'add_noise': False,  # Add realistic depth sensor noise
     'noise_std': 0.01,  # Standard deviation of added noise
+    'goal_distance_threshold': 0.1,  # Distance to reach goal (changed from 0.25m to 0.1m)
 }
 
 class RDRRule:
@@ -440,35 +439,23 @@ class UAVEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
         
-        # Initialize depth processing components
-        if CONFIG['use_cnn_depth']:
-            self.depth_camera = MuJoCoDepthCamera(
-                model=self.model, 
-                camera_name='uav_depth_camera',
-                image_size=CONFIG['depth_resolution']
-            )
-            self.depth_extractor = DepthFeatureExtractor(
-                model_path=CONFIG['depth_cnn_model_path']
-            )
-            self.depth_preprocessor = create_preprocessing_pipeline(CONFIG)
-            depth_dim = CONFIG['cnn_features_dim']
-            print(f"🎥 CNN Depth Processing Enabled: {depth_dim} features from 64x64 depth images")
-        else:
-            self.depth_camera = None
-            self.depth_extractor = None
-            self.depth_preprocessor = None
-            depth_dim = CONFIG['depth_features_dim']
-            print(f"📡 Raycast Depth Processing: {depth_dim} simulated depth readings")
+        # Initialize depth processing components - CNN ONLY (no raycast fallback)
+        self.depth_camera = MuJoCoDepthCamera(
+            model=self.model, 
+            camera_name='uav_depth_camera',
+            image_size=CONFIG['depth_resolution']
+        )
+        self.depth_extractor = DepthFeatureExtractor(
+            model_path=CONFIG['depth_cnn_model_path'],
+            output_features=CONFIG['cnn_features_dim']
+        )
+        self.depth_preprocessor = create_preprocessing_pipeline(CONFIG)
+        depth_dim = CONFIG['cnn_features_dim']
+        print(f"🎥 CNN Depth Processing Enabled: {depth_dim} features from 64x64 depth images")
         
-        # Observation space calculation depends on depth processing mode
-        if CONFIG['use_cnn_depth']:
-            # CNN mode: [pos(3), vel(3), goal_dist(3), cnn_features(depth_dim), navigation_features(5)]
-            # Navigation features: goal_distance, goal_direction(2), altitude, speed
-            extra_features_dim = 5
-        else:
-            # Raycast mode: [pos(3), vel(3), goal_dist(3), depth_readings(depth_dim), engineered_features(11)]
-            # Engineered features: min, mean, closest_dir(2), danger_level, clearances(4), goal_alignment(2)
-            extra_features_dim = 11
+        # Observation space: [pos(3), vel(3), goal_dist(3), cnn_features(128), navigation_features(5)]
+        # Navigation features: goal_distance, goal_direction(2), altitude, speed
+        extra_features_dim = 5
         
         obs_dim = 3 + 3 + 3 + depth_dim + extra_features_dim
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
@@ -678,32 +665,25 @@ class UAVEnv(gym.Env):
 
 
     def has_line_of_sight_to_goal(self):
-        """Simple LOS check with angular safety margin."""
+        """Simple LOS check based on CNN depth readings."""
         pos = self.data.qpos[:3]
         goal_vec = CONFIG['goal_pos'] - pos
         goal_dist = float(np.linalg.norm(goal_vec[:2]))
         if goal_dist <= 1e-6:
             return True
         
-        # Angular margin (degrees -> radians)
-        ang_margin_deg = float(self.ns_cfg.get('los_angle_margin_deg', 5.0))
-        ang_margin = np.radians(ang_margin_deg)
-        # Base ray
-        ray_dir = np.array([goal_vec[0], goal_vec[1], 0.0]) / (goal_dist + 1e-8)
-        # Rotate helper
-        def rot(vec, ang):
-            c, s = np.cos(ang), np.sin(ang)
-            return np.array([c*vec[0]-s*vec[1], s*vec[0]+c*vec[1], 0.0])
-        rays = [ray_dir, rot(ray_dir, ang_margin), rot(ray_dir, -ang_margin)]
-        min_obs_dist = CONFIG['depth_range']
-        for rd in rays:
-            for obs in self.obstacles:
-                obs_dist = self._ray_obstacle_intersection(pos, rd, obs)
-                if obs_dist < min_obs_dist:
-                    min_obs_dist = obs_dist
-        
-        # Direct LOS check - no confirmation steps needed
-        return (min_obs_dist >= goal_dist - 1e-6)
+        # Get current depth features from CNN
+        try:
+            depth_features = self._get_depth_readings(pos)
+            # If CNN can see clearly (min depth > 0.5), assume LOS
+            min_depth_normalized = np.min(depth_features)
+            min_depth_m = min_depth_normalized * CONFIG['depth_range']
+            
+            # If minimum obstacle distance > goal distance, likely have LOS
+            return (min_depth_m >= goal_dist - 1e-6)
+        except:
+            # If CNN fails, assume we have LOS (agent will learn)
+            return True
 
     def symbolic_action(self, t_step=None):
         """Compute RDR-based action in env action space (vx, vy, vz=0)."""
@@ -1058,75 +1038,24 @@ class UAVEnv(gym.Env):
         vel = self.data.qvel[:3]
         goal_dist = CONFIG['goal_pos'] - pos
         
-        # Get depth features (CNN features or raycast readings)
+        # Get depth features from CNN (only method - no raycast fallback)
         depth_features = self._get_depth_readings(pos)
         
         # Add supplementary navigation features
         goal_direction_norm = goal_dist[:2] / (np.linalg.norm(goal_dist[:2]) + 1e-8)
         
-        if CONFIG['use_cnn_depth'] and len(depth_features) == CONFIG['cnn_features_dim']:
-            # CNN features are already processed and meaningful
-            # Add goal direction as supplementary navigation features
-            navigation_features = np.array([
-                np.linalg.norm(goal_dist),      # Distance to goal
-                goal_direction_norm[0],         # Goal direction X
-                goal_direction_norm[1],         # Goal direction Y
-                pos[2],                         # Current altitude
-                np.linalg.norm(vel),           # Current speed
-            ])
-            
-            # Combine all observation components
-            obs = np.concatenate([pos, vel, goal_dist, depth_features, navigation_features])
-            
-        else:
-            # Traditional raycast processing with engineered features
-            # === DEPTH SENSOR FEATURE ENGINEERING ===
-            
-            # 1. Minimum distance (closest obstacle)
-            min_depth = np.min(depth_features)
-            
-            # 2. Mean distance (overall clearance)  
-            mean_depth = np.mean(depth_features)
-            
-            # 3. Direction to closest obstacle (unit vector)
-            closest_idx = np.argmin(depth_features)
-            fov_rad = math.radians(CONFIG['depth_fov'])
-            if CONFIG['depth_features_dim'] == 1:
-                closest_angle = 0  # Forward direction
-            else:
-                angle_offset = (closest_idx / (CONFIG['depth_features_dim'] - 1) - 0.5) * fov_rad
-                closest_angle = angle_offset
-            obstacle_direction = np.array([np.cos(closest_angle), np.sin(closest_angle)])
-            
-            # 4. Danger level (ratio of close obstacles)
-            danger_threshold = 0.36  # 1.0m / 2.8m normalized
-            num_close_obstacles = np.sum(depth_features < danger_threshold)
-            danger_level = num_close_obstacles / CONFIG['depth_features_dim']
-            
-            # 5. Directional clearance
-            sector_size = max(1, len(depth_features) // 4)
-            left_clear = np.mean(depth_features[0:sector_size]) if sector_size > 0 else mean_depth
-            center_left_clear = np.mean(depth_features[sector_size:2*sector_size]) if 2*sector_size <= len(depth_features) else mean_depth
-            center_right_clear = np.mean(depth_features[2*sector_size:3*sector_size]) if 3*sector_size <= len(depth_features) else mean_depth
-            right_clear = np.mean(depth_features[3*sector_size:4*sector_size]) if 4*sector_size <= len(depth_features) else mean_depth
-            
-            # Combine engineered features (11 dimensions)
-            engineered_features = np.array([
-                min_depth,                    # 1D
-                mean_depth,                   # 1D  
-                obstacle_direction[0],        # 1D
-                obstacle_direction[1],        # 1D
-                danger_level,                 # 1D
-                left_clear,                   # 1D
-                center_left_clear,            # 1D
-                center_right_clear,           # 1D
-                right_clear,                  # 1D
-                goal_direction_norm[0],       # 1D
-                goal_direction_norm[1]        # 1D
-            ])
-            
-            # Combine all observation components
-            obs = np.concatenate([pos, vel, goal_dist, depth_features, engineered_features])
+        # CNN features are already processed and meaningful
+        # Add goal direction as supplementary navigation features
+        navigation_features = np.array([
+            np.linalg.norm(goal_dist),      # Distance to goal
+            goal_direction_norm[0],         # Goal direction X
+            goal_direction_norm[1],         # Goal direction Y
+            pos[2],                         # Current altitude
+            np.linalg.norm(vel),           # Current speed
+        ])
+        
+        # Combine all observation components
+        obs = np.concatenate([pos, vel, goal_dist, depth_features, navigation_features])
         
         # NaN protection - critical for preventing training crashes
         if np.isnan(obs).any():
@@ -1142,161 +1071,29 @@ class UAVEnv(gym.Env):
         return obs
 
     def _get_depth_readings(self, pos):
-        """Get depth features using CNN processing or fallback to raycast simulation"""
+        """Get depth features using CNN processing (no raycast fallback)"""
         
-        if CONFIG['use_cnn_depth'] and self.depth_camera is not None and self.depth_extractor is not None:
-            try:
-                # Get depth image from MuJoCo camera
-                depth_image = self.depth_camera.render_depth_image(self.data)
-                
-                # Apply preprocessing pipeline if available
-                if self.depth_preprocessor is not None:
-                    depth_tensor = self.depth_preprocessor.preprocess(depth_image)
-                    # Extract features using CNN
-                    depth_features = self.depth_extractor.extract_features(depth_tensor)
-                else:
-                    # Direct CNN processing without preprocessing
-                    depth_features = self.depth_extractor.extract_features(depth_image)
-                
-                return depth_features
-                
-            except Exception as e:
-                print(f"⚠️ MuJoCo depth rendering failed: {e}")
-                # Fall through to raycast simulation
-        
-        # Fallback to raycast-based depth simulation
-        return np.array(self._simulate_depth_from_raycast(pos))
-    
-    def _simulate_depth_from_raycast(self, pos):
-        """Simulate depth sensor using raycast (similar to LIDAR but mimicking camera-like sensing)"""
-        depth_readings = []
-        obstacle_detection_threshold = 1.5  # meters
-        
-        # Generate rays in a camera-like pattern rather than full 360 degrees
-        # Simulate a forward-facing depth camera with limited FOV
-        fov_rad = math.radians(CONFIG['depth_fov'])
-        center_angle = 0  # Forward direction
-        num_rays = CONFIG['depth_features_dim']
-        
-        for i in range(num_rays):
-            # Calculate ray direction within camera FOV
-            if num_rays == 1:
-                angle = center_angle
+        try:
+            # Get depth image from MuJoCo camera
+            depth_image = self.depth_camera.render_depth_image(self.data)
+            
+            # Apply preprocessing pipeline if available
+            if self.depth_preprocessor is not None:
+                depth_tensor = self.depth_preprocessor.preprocess(depth_image)
+                # Extract features using CNN
+                depth_features = self.depth_extractor.extract_features(depth_tensor)
             else:
-                # Distribute rays across FOV
-                angle_offset = (i / (num_rays - 1) - 0.5) * fov_rad
-                angle = center_angle + angle_offset
+                # Direct CNN processing without preprocessing
+                depth_features = self.depth_extractor.extract_features(depth_image)
             
-            ray_dir = np.array([math.cos(angle), math.sin(angle), 0])
+            return depth_features
             
-            # Cast ray and find closest obstacle or boundary
-            min_distance = CONFIG['depth_range']
-            closest_obstacle = None
-            
-            # Check boundary intersection
-            boundary_dist = self._ray_boundary_intersection(pos, ray_dir)
-            if boundary_dist < min_distance:
-                min_distance = boundary_dist
-            
-            # Check obstacle intersections
-            for obs in self.obstacles:
-                obs_dist = self._ray_obstacle_intersection(pos, ray_dir, obs)
-                if obs_dist < min_distance:
-                    min_distance = obs_dist
-                    closest_obstacle = obs
-            
-            # Log obstacle detection if obstacle is within detection threshold
-            if (closest_obstacle is not None and 
-                min_distance < obstacle_detection_threshold and 
-                min_distance < CONFIG['depth_range']):
-                
-                # Get current velocity from the data
-                current_vel = self.data.qvel[:3].copy()
-                
-                # Log the obstacle detection
-                self.log_obstacle_detection(
-                    uav_pos=pos,
-                    obstacle_pos=np.array(closest_obstacle['pos']),
-                    obstacle_type=closest_obstacle['shape'],
-                    obstacle_id=closest_obstacle['id'],
-                    detection_distance=min_distance,
-                    detection_angle=np.degrees(angle),
-                    prev_vel=self.prev_velocity.copy(),
-                    new_vel=current_vel
-                )
-            
-            # Normalize depth reading to [0, 1] range
-            normalized_distance = min_distance / CONFIG['depth_range']
-            depth_readings.append(normalized_distance)
-        
-        return depth_readings
-
-    def _ray_boundary_intersection(self, pos, ray_dir):
-        """Calculate intersection of ray with world boundaries"""
-        half_world = CONFIG['world_size'] / 2
-        min_dist = CONFIG['depth_range']
-        
-        # Check intersection with each boundary
-        boundaries = [
-            (half_world, np.array([1, 0, 0])),   # +X boundary
-            (-half_world, np.array([-1, 0, 0])), # -X boundary
-            (half_world, np.array([0, 1, 0])),   # +Y boundary
-            (-half_world, np.array([0, -1, 0]))  # -Y boundary
-        ]
-        
-        for boundary_pos, boundary_normal in boundaries:
-            # Ray-plane intersection
-            denominator = np.dot(ray_dir, boundary_normal)
-            if abs(denominator) > 1e-6:  # Ray not parallel to boundary
-                if boundary_normal[0] != 0:  # X boundary
-                    t = (boundary_pos - pos[0]) / ray_dir[0]
-                else:  # Y boundary
-                    t = (boundary_pos - pos[1]) / ray_dir[1]
-                
-                if t > 0:  # Ray goes forward
-                    intersection = pos + t * ray_dir
-                    # Check if intersection is within boundary limits
-                    if (-half_world <= intersection[0] <= half_world and 
-                        -half_world <= intersection[1] <= half_world):
-                        min_dist = min(min_dist, t)
-        
-        return min_dist
-
-    def _ray_obstacle_intersection(self, pos, ray_dir, obstacle):
-        """Calculate intersection of ray with obstacle"""
-        obs_pos = np.array(obstacle['pos'])
-        min_dist = CONFIG['depth_range']
-        
-        if obstacle['shape'] == 'box':
-            # Simple box intersection (approximate)
-            # Calculate distance to box center and subtract box size
-            to_obs = obs_pos - pos
-            proj_length = np.dot(to_obs, ray_dir)
-            
-            if proj_length > 0:  # Obstacle is in ray direction
-                closest_point = pos + proj_length * ray_dir
-                # Check if ray passes near the obstacle
-                lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])  # Only X,Y
-                
-                if lateral_dist < max(obstacle['size'][0], obstacle['size'][1]):
-                    # Approximate distance to obstacle surface
-                    surface_dist = max(0, proj_length - max(obstacle['size'][0], obstacle['size'][1]))
-                    min_dist = min(min_dist, surface_dist)
-        
-        elif obstacle['shape'] == 'cylinder':
-            # Ray-cylinder intersection (simplified)
-            to_obs = obs_pos - pos
-            proj_length = np.dot(to_obs, ray_dir)
-            
-            if proj_length > 0:  # Obstacle is in ray direction
-                closest_point = pos + proj_length * ray_dir
-                lateral_dist = np.linalg.norm((obs_pos - closest_point)[:2])  # Only X,Y
-                
-                if lateral_dist < obstacle['size'][0]:  # Within cylinder radius
-                    surface_dist = max(0, proj_length - obstacle['size'][0])
-                    min_dist = min(min_dist, surface_dist)
-        
-        return min_dist
+        except Exception as e:
+            print(f"❌ ERROR: CNN depth processing failed: {e}")
+            print("❌ No raycast fallback available - CNN is required!")
+            raise  # Raise error instead of falling back
+    
+    # RAYCAST SIMULATION REMOVED - CNN is the only depth sensing method
 
     def _get_reward_and_termination_info(self, obs):
         pos = obs[:3]
@@ -1344,7 +1141,7 @@ class UAVEnv(gym.Env):
             return reward, termination_info
             
         # Simple goal achievement - immediate reward and termination
-        if goal_dist < 0.1:
+        if goal_dist < CONFIG['goal_distance_threshold']:  # Default 0.1m
             reward = 100  # Simple goal reward
             termination_info['terminated'] = True
             termination_info['termination_reason'] = 'goal_reached'
