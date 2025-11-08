@@ -39,7 +39,7 @@ CONFIG = {
     'depth_range': 2.9,  # Depth camera maximum detection range
     'depth_resolution': 64,  # Depth image resolution (64x64)
     'depth_fov': 90,  # Field of view in degrees
-    'cnn_features_dim': 128,  # CNN extracted features dimension (no raycast fallback)
+    'depth_features_dim': 128,  # CNN extracted features dimension (no raycast fallback)
     'depth_cnn_model_path': None,  # Path to pretrained CNN model
     'enable_denoising': False,  # Enable depth image denoising
     'enable_enhancement': True,  # Enable depth image enhancement
@@ -381,6 +381,7 @@ class EnvironmentGenerator:
       <site name="motor2" pos="-0.08 0.08 0" size="0.01"/>
       <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
       <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
+      <camera name="uav_depth_camera" mode="fixed" pos="0 0 0" xyaxes="1 0 0 0 1 0" fovy="90"/>
     </body>'''
         for obs in obstacles:
             if obs['shape'] == 'box':
@@ -447,10 +448,10 @@ class UAVEnv(gym.Env):
         )
         self.depth_extractor = DepthFeatureExtractor(
             model_path=CONFIG['depth_cnn_model_path'],
-            output_features=CONFIG['cnn_features_dim']
+            output_features=CONFIG['depth_features_dim']
         )
         self.depth_preprocessor = create_preprocessing_pipeline(CONFIG)
-        depth_dim = CONFIG['cnn_features_dim']
+        depth_dim = CONFIG['depth_features_dim']
         print(f"🎥 CNN Depth Processing Enabled: {depth_dim} features from 64x64 depth images")
         
         # Observation space: [pos(3), vel(3), goal_dist(3), cnn_features(128), navigation_features(5)]
@@ -693,7 +694,10 @@ class UAVEnv(gym.Env):
         # Prepare context for RDR system
         pos = self.data.qpos[:3]
         obs = self._get_obs()
-        depth_readings = obs[9:9+CONFIG['depth_features_dim']]  # Depth sensor data
+        # Observation layout: [pos:3, vel:3, goal_dist:3, depth_features:128, nav:5] = 142D
+        depth_features_start = 9
+        depth_features_end = 9 + CONFIG['depth_features_dim']
+        depth_readings = obs[depth_features_start:depth_features_end]  # CNN depth features
         
         context = self._prepare_rdr_context(pos, depth_readings, obs)
         
@@ -834,7 +838,10 @@ class UAVEnv(gym.Env):
         """Check if a specific (non-default) RDR rule is available for current state"""
         pos = self.data.qpos[:3]
         obs = self._get_obs()
-        depth_readings = obs[9:9+CONFIG['depth_features_dim']]  # Depth sensor data
+        # Observation layout: [pos:3, vel:3, goal_dist:3, depth_features:128, nav:5] = 142D
+        depth_features_start = 9
+        depth_features_end = 9 + CONFIG['depth_features_dim']
+        depth_readings = obs[depth_features_start:depth_features_end]  # CNN depth features
         context = self._prepare_rdr_context(pos, depth_readings, obs)
         return self.rdr_system.has_specific_rule(context)
 
@@ -1100,8 +1107,11 @@ class UAVEnv(gym.Env):
         vel = obs[3:6]
         goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
         
-        # Extract depth sensor readings (normalized)
-        depth_readings = obs[9:9+CONFIG['depth_features_dim']]
+        # Extract depth sensor readings from CNN features
+        # Observation layout: [pos:3, vel:3, goal_dist:3, depth_features:128, nav:5] = 142D
+        depth_features_start = 9
+        depth_features_end = 9 + CONFIG['depth_features_dim']
+        depth_readings = obs[depth_features_start:depth_features_end]
         min_obstacle_dist_norm = np.min(depth_readings)
         min_obstacle_dist = min_obstacle_dist_norm * CONFIG['depth_range']  # Convert back to meters        # Initialize termination info
         termination_info = {

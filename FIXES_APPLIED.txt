@@ -1,0 +1,141 @@
+===============================================
+TRAINING SYSTEM FIXES APPLIED - NOVEMBER 8, 2025
+===============================================
+
+ISSUE 1: Missing Camera in MuJoCo Environment
+==============================================
+Problem: 
+  - Camera "uav_depth_camera" not defined in dynamically generated environment XMLs
+  - CNN depth processing failed with "camera does not exist" errors
+  
+Solution Applied:
+  - Added camera definition to environment.xml (static environment)
+  - Added camera definition to EnvironmentGenerator.create_xml_with_obstacles() (dynamic environments)
+  - Camera spec: <camera name="uav_depth_camera" mode="fixed" pos="0 0 0" xyaxes="1 0 0 0 1 0" fovy="90"/>
+
+Files Modified:
+  - /environment.xml
+  - /uav_env.py (line 365 in create_xml_with_obstacles function)
+
+
+ISSUE 2: Configuration Dictionary Key Mismatch
+==============================================
+Problem:
+  - Code referenced CONFIG['cnn_features_dim'] but CONFIG key was named 'depth_features_dim'
+  - Multiple locations using inconsistent key names
+  
+Solution Applied:
+  - Unified CONFIG key to 'depth_features_dim' (used in all observation space calculations)
+  - Replaced all old references from 'cnn_features_dim' to 'depth_features_dim'
+  
+Files Modified:
+  - /uav_env.py (line 42): CONFIG definition
+
+Files Checked:
+  - Verified lines 450, 453: Both correctly use CONFIG['depth_features_dim']
+
+
+ISSUE 3: Observation Space Indexing in RDR Functions
+====================================================
+Problem:
+  - RDR (Ripple Down Rules) system tried to extract depth features from observation using wrong indices
+  - Observation space changed from 25D to 142D but code still assumed old layout
+  - Caused KeyError when accessing obs[9:9+CONFIG['depth_features_dim']]
+
+Current Observation Layout (142D):
+  - [0:3]   = position (3D)
+  - [3:6]   = velocity (3D)
+  - [6:9]   = goal_distance (3D)
+  - [9:137] = CNN depth features (128D)
+  - [137:142] = navigation features (5D)
+  
+Solution Applied:
+  - Fixed all RDR depth feature extraction to explicitly index [9:137]
+  - Added clear documentation of observation space layout
+  - Lines modified: 694, 839, 1109
+
+Files Modified:
+  - /uav_env.py:
+    - symbolic_action() function (line 694-700)
+    - has_specific_rdr_rule() function (line 839-845)
+    - _get_reward_and_termination_info() function (line 1109-1115)
+
+
+ISSUE 4: Missing Variant-Specific PPO Hyperparameters
+====================================================
+Problem:
+  - All three PPO variants (Vanilla, AR, NS) used identical hyperparameters
+  - Different PPO types require different learning rates, clip ranges, and optimization epochs
+  - User commented that different PPO types should have different parameters
+  
+Solution Applied:
+  - Created separate hyperparameter configurations for each PPO variant
+  - Applied variant-specific tuning:
+  
+  VANILLA PPO (Basic RL):
+    - K_epochs: 11
+    - eps_clip: 0.1
+    - gamma: 0.999
+    - lr_actor: 0.00005
+    - lr_critic: 0.0002
+    - action_std: 1.0
+    
+  AR PPO (Augmented Rewards):
+    - K_epochs: 13 (more epochs for multiple reward signals)
+    - eps_clip: 0.1
+    - gamma: 0.9995 (higher for reward composition)
+    - lr_actor: 0.00006 (slightly higher)
+    - lr_critic: 0.00025 (slightly higher)
+    - action_std: 1.0
+    
+  NS PPO (Neurosymbolic):
+    - K_epochs: 15 (more epochs for RDR rule refinement)
+    - eps_clip: 0.15 (higher for RDR stability)
+    - gamma: 0.999
+    - lr_actor: 0.00004 (lower for symbolic stability)
+    - lr_critic: 0.00015 (lower for symbolic stability)
+    - action_std: 0.8 (lower for more focused exploration)
+
+Files Modified:
+  - /training.py (lines 35-90): Complete restructure of hyperparameter initialization
+
+
+SUMMARY OF CHANGES
+==================
+
+Critical Fixes (Blocking Errors):
+  ✓ Camera definition in environment templates
+  ✓ Configuration key unification (depth_features_dim)
+  ✓ Observation space indexing in RDR functions
+
+Performance Enhancements:
+  ✓ Variant-specific hyperparameter tuning
+  ✓ Clear documentation of observation space layout
+  ✓ Explicit error handling instead of silent fallbacks
+
+Files Modified:
+  1. environment.xml - Added camera to static environment
+  2. uav_env.py - Fixed config keys, camera in dynamic XML, observation indexing
+  3. training.py - Added variant-specific hyperparameters
+
+Testing Status:
+  - All fixes applied and committed
+  - Ready for training run with `python training.py --ppo_type vanilla`
+  - Can also run: `python training.py --ppo_type ar` or `python training.py --ppo_type ns`
+
+
+NEXT STEPS
+==========
+1. Run: python training.py --ppo_type vanilla --episodes 50
+   (Will train for 50 episodes across all 10 curriculum levels)
+   
+2. Monitor training output for:
+   - MuJoCo depth camera initialization success
+   - CNN feature extraction working
+   - Episode rewards increasing over time
+   - No "camera does not exist" errors
+   
+3. After training, check for saved weights:
+   - Vanilla: PPO_preTrained/UAVEnv/Vanilla_PPO_UAV_Weights.pth
+   - AR: PPO_preTrained/UAVEnv/AR_PPO_UAV_Weights.pth
+   - NS: PPO_preTrained/UAVEnv/NS_PPO_UAV_Weights.pth

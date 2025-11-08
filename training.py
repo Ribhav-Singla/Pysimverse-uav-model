@@ -34,7 +34,56 @@ def main():
                         help='Episodes per curriculum level (default: 50)')
     args = parser.parse_args()
     
-    ############## Hyperparameters ##############
+    ############## PPO Type Configuration ##############
+    ppo_type = args.ppo_type
+    
+    # Variant-specific hyperparameters
+    if ppo_type == 'vanilla':
+        # Vanilla PPO: Simple RL, no augmentations
+        print(f"🤖 Training Mode: VANILLA PPO (Basic rewards only)")
+        print("   Configuration: Basic RL learning with standard PPO")
+        ns_lambda = 0.0
+        use_neurosymbolic = False
+        use_extra_rewards = False
+        update_timestep = 1024
+        action_std = 1.0
+        K_epochs = 11
+        eps_clip = 0.1
+        gamma = 0.999
+        lr_actor = 0.00005
+        lr_critic = 0.0002
+        
+    elif ppo_type == 'ar':
+        # AR PPO: Augmented Rewards with boundary/goal detection penalties
+        print(f"💰 Training Mode: AR PPO (Augmented Rewards)")
+        print("   Configuration: Extra reward signals for boundary and goal detection")
+        ns_lambda = 0.0
+        use_neurosymbolic = False
+        use_extra_rewards = True
+        update_timestep = 1024
+        action_std = 1.0
+        K_epochs = 13  # Slightly more epochs for more reward channels
+        eps_clip = 0.1
+        gamma = 0.9995  # Slightly higher for reward composition
+        lr_actor = 0.00006
+        lr_critic = 0.00025
+        
+    elif ppo_type == 'ns':
+        # NS PPO: Neurosymbolic with RDR rules
+        print(f"🧠 Training Mode: NS PPO (Neurosymbolic with RDR)")
+        print("   Configuration: Combines RL with symbolic rule system")
+        ns_lambda = 1.0
+        use_neurosymbolic = True
+        use_extra_rewards = False  # NS uses neurosymbolic logic instead
+        update_timestep = 1024
+        action_std = 0.8  # Slightly lower for more focused exploration
+        K_epochs = 15  # More epochs for rule refinement
+        eps_clip = 0.15  # Higher clip for RDR stability
+        gamma = 0.999
+        lr_actor = 0.00004  # Lower for symbolic stability
+        lr_critic = 0.00015
+    
+    ############## Common Hyperparameters ##############
     env_name = "UAVEnv"
     render = False
     solved_reward = 1000         # threshold to save best model (but continue training)
@@ -52,38 +101,8 @@ def main():
     max_episodes = total_episodes
     max_timesteps = 20000        # max timesteps in one episode
 
-    update_timestep = 1024      # OPTIMIZED: update policy every 1024 timesteps (was 2048)
-    action_std = 1.0            # OPTIMIZED: Start with 100% exploration (was 0.3)
-    K_epochs = 11               # update policy for K epochs (reduced for faster updates)
-    eps_clip = 0.1              # clip parameter for PPO (reduced for finer control)
-    gamma = 0.999               # increased for longer-term planning
-
-    lr_actor = 0.00005          # learning rate for actor (reduced for stability)
-    lr_critic = 0.0002          # learning rate for critic (reduced for stability)
-
     random_seed = 0
     #############################################
-
-    # Map PPO type to configuration
-    ppo_type = args.ppo_type
-    if ppo_type == 'vanilla':
-        # Vanilla PPO: lambda=0, no extra rewards
-        ns_lambda = 0.0
-        use_neurosymbolic = False
-        use_extra_rewards = False
-        print(f"🤖 Training Mode: VANILLA PPO (Basic rewards only)")
-    elif ppo_type == 'ar':
-        # AR PPO: lambda=0, with extra rewards (boundary penalties, goal detection)
-        ns_lambda = 0.0
-        use_neurosymbolic = False
-        use_extra_rewards = True
-        print(f"💰 Training Mode: AR PPO (Augmented Rewards)")
-    elif ppo_type == 'ns':
-        # NS PPO: lambda=1, neurosymbolic behavior
-        ns_lambda = 1.0
-        use_neurosymbolic = True
-        use_extra_rewards = False  # NS uses neurosymbolic logic instead
-        print(f"🧠 Training Mode: NS PPO (Neurosymbolic)")
     
     ns_cfg = {
         'use_neurosymbolic': use_neurosymbolic,
