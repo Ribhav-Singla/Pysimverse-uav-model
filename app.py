@@ -58,19 +58,42 @@ def run_comparison():
         print("[INFO] Starting UAV comparison test...")
         print("[INFO] Executing uav_comparison_test_new.py...")
         
-        result = subprocess.run(
+        # Use Popen to stream logs in real-time
+        process = subprocess.Popen(
             ['python', 'uav_comparison_test_new.py'],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
+            bufsize=1,
             cwd=os.getcwd()
         )
         
-        if result.returncode != 0:
-            error_msg = f"Script execution failed with return code {result.returncode}"
+        # Read and print stdout in real-time
+        print("[SCRIPT OUTPUT START]")
+        while True:
+            output = process.stdout.readline()
+            if output == '' and process.poll() is not None:
+                break
+            if output:
+                print(f"[SCRIPT] {output.rstrip()}")
+        
+        # Get any remaining stderr
+        stderr_output = process.stderr.read()
+        if stderr_output:
+            print("[SCRIPT ERRORS]")
+            print(stderr_output)
+        
+        print("[SCRIPT OUTPUT END]")
+        
+        return_code = process.returncode
+        
+        if return_code != 0:
+            error_msg = f"Script execution failed with return code {return_code}"
             print(f"[ERROR] {error_msg}")
             return jsonify({
                 "status": "error",
-                "message": error_msg
+                "message": error_msg,
+                "stderr": stderr_output
             }), 500
         
         print(f"[SUCCESS] Comparison completed successfully!")
