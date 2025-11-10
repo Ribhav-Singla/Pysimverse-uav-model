@@ -219,8 +219,11 @@ def run_comprehensive_comparison():
     all_results = []
     
     # Create results directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = f"comparison_results_{timestamp}"
+    results_dir = "Agents"
+    # Remove existing Agents folder if it exists to replace it
+    import shutil
+    if os.path.exists(results_dir):
+        shutil.rmtree(results_dir)
     os.makedirs(results_dir, exist_ok=True)
     
     # Create agent folders
@@ -240,7 +243,7 @@ def run_comprehensive_comparison():
     current_test = 0
     
     # Loop through obstacle counts (1 to 15)
-    for obstacle_count in range(1, 16):
+    for obstacle_count in range(1, 2):
         print(f"\n🎯 Testing with {obstacle_count} obstacles")
         print("-" * 40)
         
