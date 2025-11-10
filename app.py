@@ -2,6 +2,10 @@ from flask import Flask, request, jsonify
 import subprocess
 import os
 import csv
+import sys
+
+# Force logs to flush immediately
+sys.stdout.reconfigure(line_buffering=True)
 
 app = Flask(__name__)
 
