@@ -1,4 +1,0 @@
-map_seed,level,model,goal_reached,number_of_steps,collision,out_of_bound
-1,1,Pure_Neural,True,1091,False,False
-1,1,Neurosymbolic,True,2051,False,False
-1,1,AR_PPO,True,786,False,False
