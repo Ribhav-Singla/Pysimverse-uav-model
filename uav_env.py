@@ -1021,7 +1021,7 @@ class UAVEnv(gym.Env):
         # Get LIDAR readings (normalized to [0, 1])
         lidar_readings = self._get_lidar_readings(pos)
         
-        # === LIDAR FEATURE ENGINEERING ===
+        # === LIDAR FEATURE ENGINEERING ==
         # Extract meaningful features from raw LIDAR data
         
         # 1. Minimum distance (closest obstacle)
