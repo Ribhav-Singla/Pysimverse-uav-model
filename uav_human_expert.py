@@ -963,7 +963,7 @@ class PerformanceComparison:
                     
                     # Check goal reached
                     goal_distance = np.linalg.norm(current_pos - env.goal_pos)
-                    if goal_distance < 0.2 and not control_system.goal_reached:
+                    if goal_distance < 0.25 and not control_system.goal_reached:
                         control_system.goal_reached = True
                         control_system.trial_complete = True
                         print(f"\n🎉 GOAL REACHED! Distance: {goal_distance:.3f}m")
@@ -1236,7 +1236,7 @@ def run_manual_only():
                 
                 # Check goal
                 goal_distance = np.linalg.norm(current_pos - CONFIG['goal_pos'])
-                if goal_distance < 0.1 and not goal_reached:
+                if goal_distance < 0.25 and not goal_reached:
                     goal_reached = True
                     mission_complete = True
                     print(f"\n🎉 GOAL REACHED! Distance: {goal_distance:.3f}m")

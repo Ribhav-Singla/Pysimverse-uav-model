@@ -579,7 +579,7 @@ class UAVAgentRunner:
                 data.qpos[2] = CONFIG['uav_flight_height']
                 
                 # Check if goal reached
-                if goal_distance < 0.3 and not goal_reached:  # 30cm tolerance
+                if goal_distance < 0.25 and not goal_reached:  # 30cm tolerance
                     if self.verbose:
                         print(f"\n🎯 GOAL REACHED! Distance: {goal_distance:.3f}m")
                     goal_reached = True

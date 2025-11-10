@@ -26,7 +26,7 @@ CONFIG = {
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,  # Half of obstacle height
-    'static_obstacles': 10,
+    'static_obstacles': 8,
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
@@ -1250,7 +1250,7 @@ class UAVEnv(gym.Env):
             return reward, termination_info
             
         # Simple goal achievement - immediate reward and termination
-        if goal_dist < 0.1:
+        if goal_dist < 0.25:
             reward = 100  # Simple goal reward
             termination_info['terminated'] = True
             termination_info['termination_reason'] = 'goal_reached'

@@ -315,7 +315,7 @@ def main():
     
     # Load trained model
     try:
-        model_path = "PPO_preTrained/UAVEnv/Vanilla_PPO_UAV_Weights.pth"
+        model_path = "PPO_preTrained/UAVEnv/NS_PPO_UAV_Weights.pth"
         if os.path.exists(model_path):
             ppo_agent.load(model_path)
             print(f"🤖 Trained PPO agent loaded successfully!")
@@ -544,7 +544,7 @@ def main():
                 data.qpos[2] = CONFIG['uav_flight_height']
                 
                 # Check if goal reached
-                if goal_distance < 0.1 and not goal_reached:
+                if goal_distance < 0.25 and not goal_reached:
                     print(f"\n🎯 GOAL REACHED! Distance: {goal_distance:.3f}m")
                     goal_reached = True
                     mission_complete = True

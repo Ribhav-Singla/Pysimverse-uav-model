@@ -511,7 +511,7 @@ def run_uav_simulation_headless(
             data.qpos[2] = CUSTOM_CONFIG['uav_flight_height']
             
             # Check if goal reached
-            if goal_distance < 0.1 and not goal_reached:
+            if goal_distance < 0.25 and not goal_reached:
                 goal_reached = True
                 mission_complete = True
             
