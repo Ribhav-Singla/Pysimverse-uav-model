@@ -8,7 +8,7 @@ import csv
 import os
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Callable
-from depth_cnn import DepthFeatureExtractor
+from yolo_depth_detector import YOLODepthFeatureExtractor
 from mujoco_depth_camera import MuJoCoDepthCamera
 from depth_preprocessing import create_preprocessing_pipeline
 
@@ -39,8 +39,10 @@ CONFIG = {
     'depth_range': 2.9,  # Depth camera maximum detection range
     'depth_resolution': 64,  # Depth image resolution (64x64)
     'depth_fov': 90,  # Field of view in degrees
-    'depth_features_dim': 128,  # CNN extracted features dimension (no raycast fallback)
-    'depth_cnn_model_path': None,  # Path to pretrained CNN model
+    'depth_features_dim': 64,  # YOLOv8 extracted features dimension (was 128 for CNN)
+    'yolo_model_name': 'n',  # YOLOv8 model size: n (nano), s (small), m (medium), l (large)
+    'yolo_confidence_threshold': 0.5,  # YOLO detection confidence threshold
+    'yolo_device': 'cuda',  # 'cuda' or 'cpu'
     'enable_denoising': False,  # Enable depth image denoising
     'enable_enhancement': True,  # Enable depth image enhancement
     'add_noise': False,  # Add realistic depth sensor noise
@@ -440,21 +442,22 @@ class UAVEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
         
-        # Initialize depth processing components - CNN ONLY (no raycast fallback)
+        # Initialize depth processing components - YOLOv8 DETECTION
         self.depth_camera = MuJoCoDepthCamera(
             model=self.model, 
             camera_name='uav_depth_camera',
             image_size=CONFIG['depth_resolution']
         )
-        self.depth_extractor = DepthFeatureExtractor(
-            model_path=CONFIG['depth_cnn_model_path'],
+        self.depth_extractor = YOLODepthFeatureExtractor(
+            model_name=CONFIG['yolo_model_name'],
+            device=CONFIG['yolo_device'],
             output_features=CONFIG['depth_features_dim']
         )
         self.depth_preprocessor = create_preprocessing_pipeline(CONFIG)
         depth_dim = CONFIG['depth_features_dim']
-        print(f"🎥 CNN Depth Processing Enabled: {depth_dim} features from 64x64 depth images")
+        print(f"🎥 YOLOv8 ({CONFIG['yolo_model_name']}) Depth Processing Enabled: {depth_dim} spatial features from RGB images")
         
-        # Observation space: [pos(3), vel(3), goal_dist(3), cnn_features(128), navigation_features(5)]
+        # Observation space: [pos(3), vel(3), goal_dist(3), yolo_features(64), navigation_features(5)]
         # Navigation features: goal_distance, goal_direction(2), altitude, speed
         extra_features_dim = 5
         
@@ -1078,42 +1081,43 @@ class UAVEnv(gym.Env):
         return obs
 
     def _get_depth_readings(self, pos):
-        """Get depth features using CNN processing (no raycast fallback)"""
+        """Get spatial features using YOLOv8 object detection"""
         
         try:
             # Get depth image from MuJoCo camera
             depth_image = self.depth_camera.render_depth_image(self.data)
             
-            # Apply preprocessing pipeline if available
-            if self.depth_preprocessor is not None:
-                depth_tensor = self.depth_preprocessor.preprocess(depth_image)
-                # Extract features using CNN
-                depth_features = self.depth_extractor.extract_features(depth_tensor)
-            else:
-                # Direct CNN processing without preprocessing
-                depth_features = self.depth_extractor.extract_features(depth_image)
+            # Convert depth image to RGB format for YOLO
+            # Normalize depth to 0-255 for YOLO input
+            depth_normalized = ((depth_image - np.min(depth_image)) / (np.max(depth_image) - np.min(depth_image) + 1e-6) * 255).astype(np.uint8)
             
-            return depth_features
+            # Convert single channel to 3 channels (RGB) for YOLO
+            rgb_image = np.stack([depth_normalized, depth_normalized, depth_normalized], axis=2)
+            
+            # Extract spatial features using YOLOv8
+            spatial_features = self.depth_extractor.extract_features(rgb_image)
+            
+            return spatial_features
             
         except Exception as e:
-            print(f"❌ ERROR: CNN depth processing failed: {e}")
-            print("❌ No raycast fallback available - CNN is required!")
-            raise  # Raise error instead of falling back
+            print(f"❌ ERROR: YOLOv8 feature extraction failed: {e}")
+            # Return zero features if YOLO fails
+            return np.zeros(CONFIG['depth_features_dim'], dtype=np.float32)
     
-    # RAYCAST SIMULATION REMOVED - CNN is the only depth sensing method
+    # YOLOv8 is the only depth sensing method - no raycast fallback
 
     def _get_reward_and_termination_info(self, obs):
         pos = obs[:3]
         vel = obs[3:6]
         goal_dist = np.linalg.norm(CONFIG['goal_pos'] - pos)
         
-        # Extract depth sensor readings from CNN features
-        # Observation layout: [pos:3, vel:3, goal_dist:3, depth_features:128, nav:5] = 142D
+        # Extract spatial features from YOLO detection
+        # Observation layout: [pos:3, vel:3, goal_dist:3, yolo_features:64, nav:5] = 80D
         depth_features_start = 9
         depth_features_end = 9 + CONFIG['depth_features_dim']
-        depth_readings = obs[depth_features_start:depth_features_end]
-        min_obstacle_dist_norm = np.min(depth_readings)
-        min_obstacle_dist = min_obstacle_dist_norm * CONFIG['depth_range']  # Convert back to meters        # Initialize termination info
+        spatial_features = obs[depth_features_start:depth_features_end]
+        min_obstacle_dist_norm = np.min(spatial_features) if len(spatial_features) > 0 else 1.0
+        min_obstacle_dist = min_obstacle_dist_norm * CONFIG['depth_range']  # Convert to meters
         termination_info = {
             'terminated': False,
             'termination_reason': 'none',
@@ -1173,8 +1177,8 @@ class UAVEnv(gym.Env):
             boundary_penalty = self._get_boundary_approach_penalty(pos)
             reward += boundary_penalty
             
-            # 4. LIDAR goal detection reward (1.5x when moving toward detected goal)
-            goal_detection_reward = self._get_depth_goal_detection_reward(pos, vel, depth_readings)
+            # 4. YOLO goal detection reward (1.5x when moving toward detected goal)
+            goal_detection_reward = self._get_depth_goal_detection_reward(pos, vel, spatial_features)
             reward += goal_detection_reward
         
         # 3. Basic collision avoidance (for all PPO types)
