@@ -2,11 +2,8 @@ import { Worker } from 'bullmq';
 import IORedis from 'ioredis';
 import 'dotenv/config.js';
 import { exec } from 'child_process';
-import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
-
-const execAsync = promisify(exec);
 
 const connection = new IORedis(process.env.UPSTASH_REDIS_URL, {
     maxRetriesPerRequest: null,
@@ -119,28 +116,64 @@ async function collectAgentsData() {
 }
 
 async function executePythonScript() {
-    // Try different Python commands
-    const pythonCommands = ['python3', 'python', 'py'];
-    
-    for (const cmd of pythonCommands) {
-        try {
-            console.log(`🐍 Trying ${cmd}...`);
-            const { stdout, stderr } = await execAsync(`${cmd} uav_comparison_test_new.py`, {
-                env: { ...process.env, PYTHONIOENCODING: 'utf-8' }
-            });
-            if (stdout) console.log('📝 Python output:', stdout);
-            if (stderr && !stderr.includes('was not found')) console.log('⚠️ Python warnings:', stderr);
-            return { stdout, stderr };
-        } catch (error) {
-            if (!error.message.includes('not found')) {
-                // Real error, not just command not found
-                throw error;
+    return new Promise((resolve, reject) => {
+        const pythonCommands = ['python3', 'python', 'py'];
+        let currentIndex = 0;
+
+        function tryNextCommand() {
+            if (currentIndex >= pythonCommands.length) {
+                reject(new Error('No Python interpreter found (tried: python3, python, py)'));
+                return;
             }
-            console.log(`   ❌ ${cmd} not available`);
+
+            const cmd = pythonCommands[currentIndex];
+            console.log(`🐍 Trying ${cmd}...`);
+            
+            const child = exec(`${cmd} -u uav_comparison_test_new.py`, {
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
+            });
+
+            let hasOutput = false;
+
+            // Stream stdout in real-time
+            child.stdout.on('data', (data) => {
+                hasOutput = true;
+                process.stdout.write(data.toString());
+            });
+
+            // Stream stderr in real-time
+            child.stderr.on('data', (data) => {
+                const errorMsg = data.toString();
+                if (!errorMsg.includes('was not found') && !errorMsg.includes('not recognized')) {
+                    process.stderr.write(errorMsg);
+                }
+            });
+
+            child.on('error', (error) => {
+                if (error.message.includes('ENOENT') || error.message.includes('not found')) {
+                    console.log(`   ❌ ${cmd} not available`);
+                    currentIndex++;
+                    tryNextCommand();
+                } else {
+                    reject(error);
+                }
+            });
+
+            child.on('close', (code) => {
+                if (code === 0) {
+                    resolve({ success: true });
+                } else if (!hasOutput) {
+                    console.log(`   ❌ ${cmd} not available`);
+                    currentIndex++;
+                    tryNextCommand();
+                } else {
+                    reject(new Error(`Python script exited with code ${code}`));
+                }
+            });
         }
-    }
-    
-    throw new Error('No Python interpreter found (tried: python3, python, py)');
+
+        tryNextCommand();
+    });
 }
 
 const worker = new Worker("refreshDataQueue", async job => {

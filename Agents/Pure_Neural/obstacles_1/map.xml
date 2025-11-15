@@ -24,8 +24,8 @@
     <geom name="start_pole" type="box" size="0.03 0.03 0.4" pos="-3.0 -3.0 0.4" rgba="0 1 0 1"/>
     
     <!-- Goal position marker (blue) -->
-    <geom name="goal_marker" type="cylinder" size="0.15 0.05" pos="-1.456798159260923 -1.6567168142163546 0.05" rgba="0 0 1 0.8"/>
-    <geom name="goal_pole" type="box" size="0.03 0.03 0.4" pos="-1.456798159260923 -1.6567168142163546 0.4" rgba="0 0 1 1"/>
+    <geom name="goal_marker" type="cylinder" size="0.15 0.05" pos="-2.6059658237974874 2.835335717681785 0.05" rgba="0 0 1 0.8"/>
+    <geom name="goal_pole" type="box" size="0.03 0.03 0.4" pos="-2.6059658237974874 2.835335717681785 0.4" rgba="0 0 1 1"/>
     
     <!-- UAV starting position -->
     <body name="chassis" pos="-3.0 -3.0 1.0">
@@ -54,7 +54,7 @@
       <site name="motor3" pos="0.08 -0.08 0" size="0.01"/>
       <site name="motor4" pos="-0.08 -0.08 0" size="0.01"/>
     </body>
-    <geom name="test_obs_0" type="box" size="0.1176543128623256 0.06881299079908602 1.0" pos="2.9979566343028736 2.549563507876691 1.0" rgba="0.16094479895973202 0.5075540755383307 0.420707343901927 1.0"/>
+    <geom name="test_obs_0" type="box" size="0.11674144701963143 0.09049639334014056 1.0" pos="0.7407283800676452 2.9844663044544193 1.0" rgba="0.37921165700176884 0.5438532738217265 0.17797030539720612 1.0"/>
   </worldbody>
 
   <actuator>
