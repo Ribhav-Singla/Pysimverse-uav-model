@@ -1,4 +1,5 @@
 {
+  "type": "module",
   "dependencies": {
     "bullmq": "^5.63.2",
     "dotenv": "^17.2.3",
