@@ -161,7 +161,7 @@ async function executePythonScript() {
 
             child.on('close', (code) => {
                 if (code === 0) {
-                    resolve({ success: true });
+                    resolve({ success: true, pythonCmd: cmd });
                 } else if (!hasOutput) {
                     console.log(`   ❌ ${cmd} not available`);
                     currentIndex++;
@@ -176,13 +176,72 @@ async function executePythonScript() {
     });
 }
 
+async function processMapXMLFiles(pythonCmd) {
+    return new Promise((resolve, reject) => {
+        console.log('🔧 Processing map XML files...');
+        console.log('   ➕ Adding boundaries...');
+        
+        const addBoundaries = exec(`${pythonCmd} -u add_boundaries.py`, {
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
+        });
+
+        addBoundaries.stdout.on('data', (data) => {
+            process.stdout.write('   ' + data.toString());
+        });
+
+        addBoundaries.stderr.on('data', (data) => {
+            process.stderr.write('   ' + data.toString());
+        });
+
+        addBoundaries.on('close', (code) => {
+            if (code === 0) {
+                console.log('   ➖ Removing reflectance...');
+                
+                const removeReflectance = exec(`${pythonCmd} -u remove_reflectance.py`, {
+                    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
+                });
+
+                removeReflectance.stdout.on('data', (data) => {
+                    process.stdout.write('   ' + data.toString());
+                });
+
+                removeReflectance.stderr.on('data', (data) => {
+                    process.stderr.write('   ' + data.toString());
+                });
+
+                removeReflectance.on('close', (code) => {
+                    if (code === 0) {
+                        console.log('✅ Map XML processing complete');
+                        resolve({ success: true });
+                    } else {
+                        reject(new Error(`remove_reflectance.py exited with code ${code}`));
+                    }
+                });
+
+                removeReflectance.on('error', (error) => {
+                    reject(error);
+                });
+            } else {
+                reject(new Error(`add_boundaries.py exited with code ${code}`));
+            }
+        });
+
+        addBoundaries.on('error', (error) => {
+            reject(error);
+        });
+    });
+}
+
 const worker = new Worker("refreshDataQueue", async job => {
     console.log(`🔄 Processing job ID: ${job.id} with data:`, job.data);
     
     try {
         // Execute the UAV comparison test
         console.log('🚁 Starting UAV comparison test...');
-        await executePythonScript();
+        const { pythonCmd } = await executePythonScript();
+        
+        // Process map XML files (add boundaries and remove reflectance)
+        await processMapXMLFiles(pythonCmd);
         
         // Collect all generated data
         console.log('📊 Collecting generated data...');
