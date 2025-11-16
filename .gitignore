@@ -48,3 +48,6 @@ Thumbs.db
 # Specific log CSV files (but keep results)
 curriculum_learning_log.csv
 obstacle_detection_log.csv
+
+node_modules/
+.env

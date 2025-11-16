@@ -4,8 +4,10 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "bullmq": "^4.17.0",
-    "dotenv": "^16.4.5",
-    "ioredis": "^5.8.2"
+    "@vercel/blob": "^0.24.0",
+    "dotenv": "^16.4.5"
+  },
+  "scripts": {
+    "worker": "node worker.js"
   }
 }

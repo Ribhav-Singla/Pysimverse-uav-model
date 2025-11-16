@@ -1,33 +1,8 @@
-import { Worker } from 'bullmq';
-import IORedis from 'ioredis';
-import 'dotenv/config.js';
 import { exec } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
-
-const connection = new IORedis(process.env.UPSTASH_REDIS_URL, {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
-    enableOfflineQueue: true,
-    tls: {
-        rejectUnauthorized: false
-    },
-    retryStrategy: (times) => {
-        if (times > 5) {
-            console.error('❌ Failed to connect to Redis after 5 retries');
-            process.exit(1);
-        }
-        return Math.min(times * 100, 3000);
-    }
-});
-
-connection.on('error', (err) => {
-    console.error('❌ Redis connection error:', err.message);
-});
-
-connection.on('connect', () => {
-    console.log('✅ Connected to Redis');
-});
+import { put } from '@vercel/blob';
+import 'dotenv/config.js';
 
 async function collectAgentsData() {
     try {
@@ -232,8 +207,113 @@ async function processMapXMLFiles(pythonCmd) {
     });
 }
 
-const worker = new Worker("refreshDataQueue", async job => {
-    console.log(`🔄 Processing job ID: ${job.id} with data:`, job.data);
+async function saveAgentsData(data) {
+    try {
+        console.log('🔄 Uploading agents data to Vercel Blob...');
+        let uploadCount = 0;
+        let errorCount = 0;
+        
+        // Upload results_summary.csv
+        if (data.summary) {
+            try {
+                const blobPath = 'Agents/results_summary.csv';
+                await put(blobPath, data.summary, {
+                    access: 'public',
+                    contentType: 'text/csv',
+                    addRandomSuffix: false,
+                    token: process.env.BLOB_READ_WRITE_TOKEN
+                });
+                console.log('✅ Uploaded results_summary.csv');
+                uploadCount++;
+            } catch (err) {
+                console.error('❌ Failed to upload results_summary.csv:', err.message);
+                errorCount++;
+            }
+        }
+        
+        // Upload each agent's data
+        for (const [agentName, agentData] of Object.entries(data.agents)) {
+            console.log(`📤 Uploading ${agentName} data...`);
+            
+            // Upload obstacle folders
+            for (const [obstacleFolder, obstacleData] of Object.entries(agentData)) {
+                const basePath = `Agents/${agentName}/${obstacleFolder}`;
+                
+                // Upload map.xml
+                if (obstacleData.map_xml) {
+                    try {
+                        const blobPath = `${basePath}/map.xml`;
+                        await put(blobPath, obstacleData.map_xml, {
+                            access: 'public',
+                            contentType: 'application/xml',
+                            addRandomSuffix: false,
+                            token: process.env.BLOB_READ_WRITE_TOKEN
+                        });
+                        uploadCount++;
+                    } catch (err) {
+                        console.error(`❌ Failed to upload ${basePath}/map.xml:`, err.message);
+                        errorCount++;
+                    }
+                }
+                
+                // Upload map_metadata.json
+                if (obstacleData.map_metadata) {
+                    try {
+                        const blobPath = `${basePath}/map_metadata.json`;
+                        await put(blobPath, JSON.stringify(obstacleData.map_metadata, null, 2), {
+                            access: 'public',
+                            contentType: 'application/json',
+                            addRandomSuffix: false,
+                            token: process.env.BLOB_READ_WRITE_TOKEN
+                        });
+                        uploadCount++;
+                    } catch (err) {
+                        console.error(`❌ Failed to upload ${basePath}/map_metadata.json:`, err.message);
+                        errorCount++;
+                    }
+                }
+                
+                // Upload trajectories
+                if (obstacleData.trajectories && Object.keys(obstacleData.trajectories).length > 0) {
+                    for (const [trajFile, trajData] of Object.entries(obstacleData.trajectories)) {
+                        try {
+                            const blobPath = `${basePath}/trajectories/${trajFile}`;
+                            await put(blobPath, JSON.stringify(trajData, null, 2), {
+                                access: 'public',
+                                contentType: 'application/json',
+                                addRandomSuffix: false,
+                                token: process.env.BLOB_READ_WRITE_TOKEN
+                            });
+                            uploadCount++;
+                        } catch (err) {
+                            console.error(`❌ Failed to upload ${basePath}/trajectories/${trajFile}:`, err.message);
+                            errorCount++;
+                        }
+                    }
+                }
+            }
+            
+            console.log(`✅ Uploaded ${agentName} data to Vercel Blob`);
+        }
+        
+        console.log(`\n🎉 Upload complete!`);
+        console.log(`   ✅ Successful: ${uploadCount} files`);
+        console.log(`   ❌ Failed: ${errorCount} files`);
+        
+        if (errorCount > 0) {
+            throw new Error(`Failed to upload ${errorCount} files`);
+        }
+        
+        return { uploadCount, errorCount };
+    } catch (err) {
+        console.error('❌ Error uploading agents data to Vercel Blob:', err);
+        throw err;
+    }
+}
+
+async function main() {
+    console.log('🚀 Starting UAV Data Generation and Upload Process...');
+    console.log(`⏰ Timestamp: ${new Date().toISOString()}\n`);
     
     try {
         // Execute the UAV comparison test
@@ -247,26 +327,21 @@ const worker = new Worker("refreshDataQueue", async job => {
         console.log('📊 Collecting generated data...');
         const agentsData = await collectAgentsData();
         
-        console.log(`✅ Job ID: ${job.id} completed successfully`);
         console.log(`📦 Data collected: ${Object.keys(agentsData.agents).length} agents`);
         
-        // Return the complete data structure
-        return {
-            success: true,
-            timestamp: new Date().toISOString(),
-            data: agentsData
-        };
+        // Upload to Vercel Blob
+        const uploadResult = await saveAgentsData(agentsData);
+        
+        console.log('\n✅ Process completed successfully!');
+        console.log(`📊 Total files uploaded: ${uploadResult.uploadCount}`);
+        process.exit(0);
         
     } catch (error) {
-        console.error(`❌ Job ID: ${job.id} failed:`, error.message);
-        throw error;
+        console.error(`\n❌ Process failed:`, error.message);
+        console.error(error.stack);
+        process.exit(1);
     }
-}, { connection });
+}
 
-worker.on('completed', job => {
-    console.log(`🎉 Job ID: ${job.id} has been completed successfully.`);
-});
-
-worker.on('failed', (job, err) => {
-    console.error(`❌ Job ID: ${job.id} has failed with error: ${err.message}`);
-});
+// Run the main function
+main();
