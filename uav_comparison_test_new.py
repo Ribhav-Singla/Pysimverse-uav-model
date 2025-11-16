@@ -239,11 +239,11 @@ def run_comprehensive_comparison():
     print(f"📁 Results directory: {results_dir}")
     print("="*60)
     
-    total_tests = 15 * 3  # obstacle_counts * models
+    total_tests = 1 * 3  # obstacle_counts * models
     current_test = 0
     
-    # Loop through obstacle counts (1 to 16)
-    for obstacle_count in range(1, 16):
+    # Loop through obstacle counts (1 to 2)
+    for obstacle_count in range(1, 2):
         print(f"\n🎯 Testing with {obstacle_count} obstacles")
         print("-" * 40)
         
