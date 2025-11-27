@@ -4,7 +4,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@vercel/blob": "^0.24.0",
+    "@aws-sdk/client-s3": "^3.709.0",
     "dotenv": "^16.4.5"
   },
   "scripts": {

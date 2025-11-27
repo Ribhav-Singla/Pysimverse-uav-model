@@ -1,8 +1,18 @@
 import { exec } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
-import { put } from '@vercel/blob';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import 'dotenv/config.js';
+
+// Configure Cloudflare R2 client
+const r2Client = new S3Client({
+    region: 'auto',
+    endpoint: process.env.CLOUDFLARE_JURISDICTION_ENDPOINT,
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
+    }
+});
 
 async function collectAgentsData() {
     try {
@@ -23,32 +33,32 @@ async function collectAgentsData() {
 
         // Read each agent's data
         const agentFolders = await fs.readdir(agentsDir);
-        
+
         for (const agentName of agentFolders) {
             if (agentName === 'results_summary.csv') continue;
-            
+
             const agentPath = path.join(agentsDir, agentName);
             const stat = await fs.stat(agentPath);
-            
+
             if (!stat.isDirectory()) continue;
-            
+
             data.agents[agentName] = {};
-            
+
             // Read obstacle folders
             const obstacleFolders = await fs.readdir(agentPath);
-            
+
             for (const obstacleFolder of obstacleFolders) {
                 const obstaclePath = path.join(agentPath, obstacleFolder);
                 const obstacleStat = await fs.stat(obstaclePath);
-                
+
                 if (!obstacleStat.isDirectory()) continue;
-                
+
                 data.agents[agentName][obstacleFolder] = {
                     map_xml: null,
                     map_metadata: null,
                     trajectories: {}
                 };
-                
+
                 // Read map.xml
                 try {
                     const mapXmlPath = path.join(obstaclePath, 'map.xml');
@@ -57,7 +67,7 @@ async function collectAgentsData() {
                 } catch (err) {
                     console.log(`⚠️ No map.xml for ${agentName}/${obstacleFolder}`);
                 }
-                
+
                 // Read map_metadata.json
                 try {
                     const metadataPath = path.join(obstaclePath, 'map_metadata.json');
@@ -66,12 +76,12 @@ async function collectAgentsData() {
                 } catch (err) {
                     console.log(`⚠️ No metadata for ${agentName}/${obstacleFolder}`);
                 }
-                
+
                 // Read trajectories
                 const trajectoriesPath = path.join(obstaclePath, 'trajectories');
                 try {
                     const trajectoryFiles = await fs.readdir(trajectoriesPath);
-                    
+
                     for (const trajFile of trajectoryFiles) {
                         const trajPath = path.join(trajectoriesPath, trajFile);
                         const trajContent = await fs.readFile(trajPath, 'utf-8');
@@ -82,7 +92,7 @@ async function collectAgentsData() {
                 }
             }
         }
-        
+
         return data;
     } catch (err) {
         console.error('❌ Error collecting agents data:', err);
@@ -103,7 +113,7 @@ async function executePythonScript() {
 
             const cmd = pythonCommands[currentIndex];
             console.log(`🐍 Trying ${cmd}...`);
-            
+
             const child = exec(`${cmd} -u uav_comparison_test_new.py`, {
                 env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
             });
@@ -155,7 +165,7 @@ async function processMapXMLFiles(pythonCmd) {
     return new Promise((resolve, reject) => {
         console.log('🔧 Processing map XML files...');
         console.log('   ➕ Adding boundaries...');
-        
+
         const addBoundaries = exec(`${pythonCmd} -u add_boundaries.py`, {
             env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
         });
@@ -171,7 +181,7 @@ async function processMapXMLFiles(pythonCmd) {
         addBoundaries.on('close', (code) => {
             if (code === 0) {
                 console.log('   ➖ Removing reflectance...');
-                
+
                 const removeReflectance = exec(`${pythonCmd} -u remove_reflectance.py`, {
                     env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
                 });
@@ -207,22 +217,28 @@ async function processMapXMLFiles(pythonCmd) {
     });
 }
 
+async function uploadToR2(key, body, contentType) {
+    const command = new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: key,
+        Body: body,
+        ContentType: contentType
+    });
+
+    await r2Client.send(command);
+}
+
 async function saveAgentsData(data) {
     try {
-        console.log('🔄 Uploading agents data to Vercel Blob...');
+        console.log('🔄 Uploading agents data to Cloudflare R2...');
         let uploadCount = 0;
         let errorCount = 0;
-        
+
         // Upload results_summary.csv
         if (data.summary) {
             try {
-                const blobPath = 'Agents/results_summary.csv';
-                await put(blobPath, data.summary, {
-                    access: 'public',
-                    contentType: 'text/csv',
-                    addRandomSuffix: false,
-                    token: process.env.BLOB_READ_WRITE_TOKEN
-                });
+                const key = 'Agents/results_summary.csv';
+                await uploadToR2(key, data.summary, 'text/csv');
                 console.log('✅ Uploaded results_summary.csv');
                 uploadCount++;
             } catch (err) {
@@ -230,60 +246,45 @@ async function saveAgentsData(data) {
                 errorCount++;
             }
         }
-        
+
         // Upload each agent's data
         for (const [agentName, agentData] of Object.entries(data.agents)) {
             console.log(`📤 Uploading ${agentName} data...`);
-            
+
             // Upload obstacle folders
             for (const [obstacleFolder, obstacleData] of Object.entries(agentData)) {
                 const basePath = `Agents/${agentName}/${obstacleFolder}`;
-                
+
                 // Upload map.xml
                 if (obstacleData.map_xml) {
                     try {
-                        const blobPath = `${basePath}/map.xml`;
-                        await put(blobPath, obstacleData.map_xml, {
-                            access: 'public',
-                            contentType: 'application/xml',
-                            addRandomSuffix: false,
-                            token: process.env.BLOB_READ_WRITE_TOKEN
-                        });
+                        const key = `${basePath}/map.xml`;
+                        await uploadToR2(key, obstacleData.map_xml, 'application/xml');
                         uploadCount++;
                     } catch (err) {
                         console.error(`❌ Failed to upload ${basePath}/map.xml:`, err.message);
                         errorCount++;
                     }
                 }
-                
+
                 // Upload map_metadata.json
                 if (obstacleData.map_metadata) {
                     try {
-                        const blobPath = `${basePath}/map_metadata.json`;
-                        await put(blobPath, JSON.stringify(obstacleData.map_metadata, null, 2), {
-                            access: 'public',
-                            contentType: 'application/json',
-                            addRandomSuffix: false,
-                            token: process.env.BLOB_READ_WRITE_TOKEN
-                        });
+                        const key = `${basePath}/map_metadata.json`;
+                        await uploadToR2(key, JSON.stringify(obstacleData.map_metadata, null, 2), 'application/json');
                         uploadCount++;
                     } catch (err) {
                         console.error(`❌ Failed to upload ${basePath}/map_metadata.json:`, err.message);
                         errorCount++;
                     }
                 }
-                
+
                 // Upload trajectories
                 if (obstacleData.trajectories && Object.keys(obstacleData.trajectories).length > 0) {
                     for (const [trajFile, trajData] of Object.entries(obstacleData.trajectories)) {
                         try {
-                            const blobPath = `${basePath}/trajectories/${trajFile}`;
-                            await put(blobPath, JSON.stringify(trajData, null, 2), {
-                                access: 'public',
-                                contentType: 'application/json',
-                                addRandomSuffix: false,
-                                token: process.env.BLOB_READ_WRITE_TOKEN
-                            });
+                            const key = `${basePath}/trajectories/${trajFile}`;
+                            await uploadToR2(key, JSON.stringify(trajData, null, 2), 'application/json');
                             uploadCount++;
                         } catch (err) {
                             console.error(`❌ Failed to upload ${basePath}/trajectories/${trajFile}:`, err.message);
@@ -292,21 +293,21 @@ async function saveAgentsData(data) {
                     }
                 }
             }
-            
-            console.log(`✅ Uploaded ${agentName} data to Vercel Blob`);
+
+            console.log(`✅ Uploaded ${agentName} data to Cloudflare R2`);
         }
-        
+
         console.log(`\n🎉 Upload complete!`);
         console.log(`   ✅ Successful: ${uploadCount} files`);
         console.log(`   ❌ Failed: ${errorCount} files`);
-        
+
         if (errorCount > 0) {
             throw new Error(`Failed to upload ${errorCount} files`);
         }
-        
+
         return { uploadCount, errorCount };
     } catch (err) {
-        console.error('❌ Error uploading agents data to Vercel Blob:', err);
+        console.error('❌ Error uploading agents data to Cloudflare R2:', err);
         throw err;
     }
 }
@@ -314,28 +315,28 @@ async function saveAgentsData(data) {
 async function main() {
     console.log('🚀 Starting UAV Data Generation and Upload Process...');
     console.log(`⏰ Timestamp: ${new Date().toISOString()}\n`);
-    
+
     try {
         // Execute the UAV comparison test
         console.log('🚁 Starting UAV comparison test...');
         const { pythonCmd } = await executePythonScript();
-        
+
         // Process map XML files (add boundaries and remove reflectance)
         await processMapXMLFiles(pythonCmd);
-        
+
         // Collect all generated data
         console.log('📊 Collecting generated data...');
         const agentsData = await collectAgentsData();
-        
+
         console.log(`📦 Data collected: ${Object.keys(agentsData.agents).length} agents`);
-        
-        // Upload to Vercel Blob
+
+        // Upload to Cloudflare R2
         const uploadResult = await saveAgentsData(agentsData);
-        
+
         console.log('\n✅ Process completed successfully!');
         console.log(`📊 Total files uploaded: ${uploadResult.uploadCount}`);
         process.exit(0);
-        
+
     } catch (error) {
         console.error(`\n❌ Process failed:`, error.message);
         console.error(error.stack);

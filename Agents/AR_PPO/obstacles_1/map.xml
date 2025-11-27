@@ -21,15 +21,15 @@
     <light name="light1" pos="0 0 4" dir="0 0 -1" diffuse="1 1 1" />
     
     
-    <geom name="start_marker" type="cylinder" size="0.15 0.05" pos="3.0 3.0 0.05" rgba="0 1 0 0.8" />
-    <geom name="start_pole" type="box" size="0.03 0.03 0.4" pos="3.0 3.0 0.4" rgba="0 1 0 1" />
+    <geom name="start_marker" type="cylinder" size="0.15 0.05" pos="3.0 -3.0 0.05" rgba="0 1 0 0.8" />
+    <geom name="start_pole" type="box" size="0.03 0.03 0.4" pos="3.0 -3.0 0.4" rgba="0 1 0 1" />
     
     
-    <geom name="goal_marker" type="cylinder" size="0.15 0.05" pos="-1.5171064507070067 -0.6501263266397359 0.05" rgba="0 0 1 0.8" />
-    <geom name="goal_pole" type="box" size="0.03 0.03 0.4" pos="-1.5171064507070067 -0.6501263266397359 0.4" rgba="0 0 1 1" />
+    <geom name="goal_marker" type="cylinder" size="0.15 0.05" pos="1.3724262872666806 -0.8556453778426967 0.05" rgba="0 0 1 0.8" />
+    <geom name="goal_pole" type="box" size="0.03 0.03 0.4" pos="1.3724262872666806 -0.8556453778426967 0.4" rgba="0 0 1 1" />
     
     
-    <body name="chassis" pos="3.0 3.0 1.0">
+    <body name="chassis" pos="3.0 -3.0 1.0">
       <joint type="free" name="root" />
       <geom type="box" size="0.12 0.12 0.02" rgba="1.0 0.0 0.0 1.0" mass="0.8" />
       
@@ -55,7 +55,7 @@
       <site name="motor3" pos="0.08 -0.08 0" size="0.01" />
       <site name="motor4" pos="-0.08 -0.08 0" size="0.01" />
     </body>
-    <geom name="test_obs_0" type="cylinder" size="0.06868048245829174 1.0" pos="0.6540679812520538 0.6610634570893352 1.0" rgba="0.8266324078185366 0.8967551686382733 0.6999214993392809 1.0" />
+    <geom name="test_obs_0" type="box" size="0.11374032756429196 0.06367719328202717 1.0" pos="-3.066404198926546 -0.5696788686540416 1.0" rgba="0.6014579455694166 0.13402712166563824 0.7854463599488904 1.0" />
   <geom name="boundary_north" type="box" size="4.0 0.005 0.002" pos="0 4.0 0.002" rgba="1.0 0.0 0.0 1.0" /><geom name="boundary_south" type="box" size="4.0 0.005 0.002" pos="0 -4.0 0.002" rgba="1.0 0.0 0.0 1.0" /><geom name="boundary_east" type="box" size="0.005 4.0 0.002" pos="4.0 0 0.002" rgba="1.0 0.0 0.0 1.0" /><geom name="boundary_west" type="box" size="0.005 4.0 0.002" pos="-4.0 0 0.002" rgba="1.0 0.0 0.0 1.0" /></worldbody>
 
   <actuator>
