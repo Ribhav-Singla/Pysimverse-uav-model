@@ -124,6 +124,67 @@ async function collectAgentsData() {
     }
 }
 
+async function runTrainingScript() {
+    return new Promise((resolve, reject) => {
+        const pythonCommands = ['python3', 'python', 'py'];
+        let currentIndex = 0;
+
+        function tryNextCommand() {
+            if (currentIndex >= pythonCommands.length) {
+                reject(new Error('No Python interpreter found (tried: python3, python, py)'));
+                return;
+            }
+
+            const cmd = pythonCommands[currentIndex];
+            console.log(`🐍 Trying ${cmd}...`);
+
+            const child = exec(`${cmd} -u training.py --ppo_type ns`, {
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
+            });
+
+            let hasOutput = false;
+
+            // Stream stdout in real-time
+            child.stdout.on('data', (data) => {
+                hasOutput = true;
+                process.stdout.write(data.toString());
+            });
+
+            // Stream stderr in real-time
+            child.stderr.on('data', (data) => {
+                const errorMsg = data.toString();
+                if (!errorMsg.includes('was not found') && !errorMsg.includes('not recognized')) {
+                    process.stderr.write(errorMsg);
+                }
+            });
+
+            child.on('error', (error) => {
+                if (error.message.includes('ENOENT') || error.message.includes('not found')) {
+                    console.log(`   ❌ ${cmd} not available`);
+                    currentIndex++;
+                    tryNextCommand();
+                } else {
+                    reject(error);
+                }
+            });
+
+            child.on('close', (code) => {
+                if (code === 0) {
+                    resolve({ success: true, pythonCmd: cmd });
+                } else if (!hasOutput) {
+                    console.log(`   ❌ ${cmd} not available`);
+                    currentIndex++;
+                    tryNextCommand();
+                } else {
+                    reject(new Error(`Training script exited with code ${code}`));
+                }
+            });
+        }
+
+        tryNextCommand();
+    });
+}
+
 async function executePythonScript() {
     return new Promise((resolve, reject) => {
         const pythonCommands = ['python3', 'python', 'py'];
@@ -252,6 +313,75 @@ async function uploadToR2(key, body, contentType) {
     await r2Client.send(command);
 }
 
+async function uploadWeights() {
+    try {
+        console.log('🔄 Uploading trained weights to Cloudflare R2...');
+        const weightsDir = path.join('PPO_preTrained', 'UAVEnv');
+        let uploadCount = 0;
+        let errorCount = 0;
+
+        // Check if directory exists
+        try {
+            await fs.access(weightsDir);
+        } catch (err) {
+            console.error(`❌ Weights directory not found: ${weightsDir}`);
+            throw new Error(`Weights directory not found: ${weightsDir}`);
+        }
+
+        // Read all files in the weights directory
+        const files = await fs.readdir(weightsDir);
+        
+        for (const file of files) {
+            const filePath = path.join(weightsDir, file);
+            const stat = await fs.stat(filePath);
+            
+            if (stat.isFile()) {
+                try {
+                    const fileContent = await fs.readFile(filePath);
+                    const key = `PPO_preTrained/UAVEnv/${file}`;
+                    
+                    // Determine content type based on file extension
+                    let contentType = 'application/octet-stream';
+                    if (file.endsWith('.pth')) {
+                        contentType = 'application/octet-stream';
+                    }
+                    
+                    await uploadToR2(key, fileContent, contentType);
+                    console.log(`✅ Uploaded ${file}`);
+                    uploadCount++;
+                } catch (err) {
+                    console.error(`❌ Failed to upload ${file}:`, err.message);
+                    errorCount++;
+                }
+            }
+        }
+
+        console.log(`\n🎉 Weights upload complete!`);
+        console.log(`   ✅ Successful: ${uploadCount} files`);
+        console.log(`   ❌ Failed: ${errorCount} files`);
+
+        if (errorCount > 0) {
+            throw new Error(`Failed to upload ${errorCount} weight files`);
+        }
+
+        return { uploadCount, errorCount };
+    } catch (err) {
+        console.error('❌ Error uploading weights to Cloudflare R2:', err);
+        throw err;
+    }
+}
+
+async function uploadToR2(key, body, contentType) {
+    const command = new PutObjectCommand({
+        Bucket: process.env.R2_BUCKET_NAME,
+        Key: key,
+        Body: body,
+        ContentType: contentType
+    });
+
+    await r2Client.send(command);
+}
+
 async function saveAgentsData(data) {
     try {
         console.log('🔄 Uploading agents data to Cloudflare R2...');
@@ -337,24 +467,37 @@ async function saveAgentsData(data) {
 }
 
 async function main() {
-    console.log('🚀 Starting UAV Data Generation and Upload Process...');
+    console.log('🚀 Starting UAV Training, Data Generation and Upload Process...');
     console.log(`⏰ Timestamp: ${new Date().toISOString()}\n`);
 
     try {
-        // Execute the UAV comparison test
-        console.log('🚁 Starting UAV comparison test...');
-        const { pythonCmd } = await executePythonScript();
+        // Step 1: Run training script
+        console.log('🎓 Step 1: Running training script with NS PPO...');
+        const { pythonCmd } = await runTrainingScript();
+        console.log('✅ Training completed successfully!\n');
 
-        // Process map XML files (add boundaries and remove reflectance)
+        // Step 2: Upload trained weights
+        console.log('📦 Step 2: Uploading trained weights...');
+        const weightsUploadResult = await uploadWeights();
+        console.log(`✅ Weights uploaded: ${weightsUploadResult.uploadCount} files\n`);
+
+        // Step 3: Execute the UAV comparison test
+        console.log('🚁 Step 3: Starting UAV comparison test...');
+        await executePythonScript();
+        console.log('✅ UAV comparison test completed!\n');
+
+        // Step 4: Process map XML files (add boundaries and remove reflectance)
+        console.log('🔧 Step 4: Processing map XML files...');
         await processMapXMLFiles(pythonCmd);
 
-        // Collect all generated data
-        console.log('📊 Collecting generated data...');
+        // Step 5: Collect all generated data
+        console.log('📊 Step 5: Collecting generated data...');
         const agentsData = await collectAgentsData();
 
         console.log(`📦 Data collected: ${Object.keys(agentsData.agents).length} agents`);
 
-        // Upload to Cloudflare R2
+        // Step 6: Upload to Cloudflare R2
+        console.log('☁️  Step 6: Uploading agents data...');
         const uploadResult = await saveAgentsData(agentsData);
 
         console.log('\n✅ Process completed successfully!');

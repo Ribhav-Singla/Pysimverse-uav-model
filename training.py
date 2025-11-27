@@ -30,8 +30,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train UAV with different PPO variants')
     parser.add_argument('--ppo_type', type=str, choices=['vanilla', 'ar', 'ns'], default='ns',
                         help='PPO variant to train: vanilla (basic PPO), ar (PPO with additional rewards), ns (neurosymbolic PPO) (default: ns)')
-    parser.add_argument('--episodes', type=int, default=50,
-                        help='Episodes per curriculum level (default: 50)')
+    parser.add_argument('--episodes', type=int, default=1,
+                        help='Episodes per curriculum level (default: 1)')
     args = parser.parse_args()
     
     ############## Hyperparameters ##############

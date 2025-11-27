@@ -107,16 +107,17 @@ class RDRRuleSystem:
         self.all_rules["R1_CLEAR_PATH"] = rule_clear_path
         
         # Rule 2: Boundary safety - reduce velocity when close to boundaries
-        rule_boundary_safety = RDRRule(
-            rule_id="R2_BOUNDARY_SAFETY",
-            condition=self._condition_near_boundary,
-            conclusion="Near boundary: Reduce velocity for safety",
-            action_params={"speed_modifier": -0.25, "direction": "boundary_safe", "min_speed": 0.5}
-        )
-        self.default_rule.add_exception(rule_boundary_safety)
-        self.all_rules["R2_BOUNDARY_SAFETY"] = rule_boundary_safety
+        # COMMENTED OUT - Testing without boundary safety rule
+        # rule_boundary_safety = RDRRule(
+        #     rule_id="R2_BOUNDARY_SAFETY",
+        #     condition=self._condition_near_boundary,
+        #     conclusion="Near boundary: Reduce velocity for safety",
+        #     action_params={"speed_modifier": -0.25, "direction": "boundary_safe", "min_speed": 0.5}
+        # )
+        # self.default_rule.add_exception(rule_boundary_safety)
+        # self.all_rules["R2_BOUNDARY_SAFETY"] = rule_boundary_safety
         
-        print(f"🔧 Enhanced RDR System Initialized with {len(self.all_rules)} rules (Default + Clear Path + Boundary Safety)")
+        print(f"🔧 Enhanced RDR System Initialized with {len(self.all_rules)} rules (Default + Clear Path)")
     
     # =====================
     # Condition Functions (Simplified)
