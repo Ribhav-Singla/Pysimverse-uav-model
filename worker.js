@@ -2,7 +2,31 @@ import { exec } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import 'dotenv/config.js';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
+
+// Validate required environment variables
+const requiredEnvVars = [
+    'CLOUDFLARE_JURISDICTION_ENDPOINT',
+    'R2_ACCESS_KEY_ID',
+    'R2_SECRET_ACCESS_KEY',
+    'R2_BUCKET_NAME'
+];
+
+const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+if (missingVars.length > 0) {
+    console.error('❌ Missing required environment variables:', missingVars.join(', '));
+    console.error('Please ensure these are set in your .env file or GitHub Secrets');
+    process.exit(1);
+}
+
+console.log('✅ Environment variables loaded:');
+console.log(`   - CLOUDFLARE_JURISDICTION_ENDPOINT: ${process.env.CLOUDFLARE_JURISDICTION_ENDPOINT}`);
+console.log(`   - R2_ACCESS_KEY_ID: ${process.env.R2_ACCESS_KEY_ID?.substring(0, 8)}...`);
+console.log(`   - R2_SECRET_ACCESS_KEY: ${process.env.R2_SECRET_ACCESS_KEY ? '[SET]' : '[NOT SET]'}`);
+console.log(`   - R2_BUCKET_NAME: ${process.env.R2_BUCKET_NAME}`);
 
 // Configure Cloudflare R2 client
 const r2Client = new S3Client({
