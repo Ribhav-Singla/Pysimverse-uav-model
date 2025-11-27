@@ -371,17 +371,6 @@ async function uploadWeights() {
     }
 }
 
-async function uploadToR2(key, body, contentType) {
-    const command = new PutObjectCommand({
-        Bucket: process.env.R2_BUCKET_NAME,
-        Key: key,
-        Body: body,
-        ContentType: contentType
-    });
-
-    await r2Client.send(command);
-}
-
 async function saveAgentsData(data) {
     try {
         console.log('🔄 Uploading agents data to Cloudflare R2...');
