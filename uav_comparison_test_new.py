@@ -233,143 +233,150 @@ def run_comprehensive_comparison():
     
     print("🚁 UAV Navigation Comparison Test Suite")
     print("="*60)
-    print(f"📊 Testing obstacle counts: 1-15")
-    print(f"🗺️  1 unique map per obstacle count")
+    print(f"📊 Testing obstacle counts: 1-25")
+    print(f"🗺️  5 unique maps per obstacle count")
     print(f"🤖 Models: Pure Neural | Neurosymbolic | AR_PPO")
     print(f"📁 Results directory: {results_dir}")
     print("="*60)
     
-    total_tests = 15 * 3  # obstacle_counts * models
+    maps_per_level = 5
+    total_tests = 25 * maps_per_level * 3  # obstacle_counts * maps * models
     current_test = 0
     
-    # Loop through obstacle counts (1 to 16)
-    for obstacle_count in range(1, 16):
+    # Loop through obstacle counts (1 to 25)
+    for obstacle_count in range(1, 26):
         print(f"\n🎯 Testing with {obstacle_count} obstacles")
-        print("-" * 40)
+        print("=" * 60)
         
-        # Generate ONE random scenario for this obstacle count
-        print(f"\n📍 Generating map for level {obstacle_count}")
-        
-        obstacles = generate_random_obstacles(obstacle_count)
-        
-        # Generate safe start and goal positions
-        max_position_attempts = 20
-        for attempt in range(max_position_attempts):
-            start_pos = generate_random_corner_position()
-            goal_pos = generate_random_goal_position(start_pos)
+        # Generate 5 unique maps for this obstacle count
+        for map_id in range(1, maps_per_level + 1):
+            print(f"\n📍 Map {map_id}/{maps_per_level} for obstacle level {obstacle_count}")
+            print("-" * 40)
             
-            if (check_position_safety(start_pos, obstacles) and 
-                check_position_safety(goal_pos, obstacles)):
-                break
+            obstacles = generate_random_obstacles(obstacle_count)
             
-            if attempt == max_position_attempts - 1:
-                print(f"⚠️ Using default positions")
-                start_pos = [-3.0, -3.0, 1.0]
-                goal_pos = [3.0, 3.0, 1.0]
-        
-        print(f"   🟢 Start: [{start_pos[0]:.1f}, {start_pos[1]:.1f}, {start_pos[2]:.1f}]")
-        print(f"   🔵 Goal:  [{goal_pos[0]:.1f}, {goal_pos[1]:.1f}, {goal_pos[2]:.1f}]")
-        print(f"   🧱 Obstacles: {len(obstacles)}")
-        
-        # Generate MuJoCo XML for this map
-        map_xml = generate_mujoco_xml(obstacles, start_pos, goal_pos)
-        
-        # Create obstacle folder name
-        obstacle_folder_name = f"obstacles_{obstacle_count}"
-        
-        # Test all three models on the SAME map
-        for model in models:
-            current_test += 1
-            print(f"\n   🤖 Testing {model['name']} ({current_test}/{total_tests})")
-            
-            # Create folder structure: agent_name/obstacles_X/trajectories/
-            agent_dir = os.path.join(results_dir, model["name"])
-            obstacle_dir = os.path.join(agent_dir, obstacle_folder_name)
-            trajectory_dir = os.path.join(obstacle_dir, "trajectories")
-            os.makedirs(trajectory_dir, exist_ok=True)
-            
-            # Save map XML in obstacle folder
-            map_xml_file = os.path.join(obstacle_dir, "map.xml")
-            with open(map_xml_file, 'w') as f:
-                f.write(map_xml)
-            
-            # Save map metadata
-            map_metadata = {
-                'obstacle_count': obstacle_count,
-                'start_position': start_pos,
-                'goal_position': goal_pos,
-                'obstacles': obstacles
-            }
-            map_metadata_file = os.path.join(obstacle_dir, "map_metadata.json")
-            with open(map_metadata_file, 'w') as f:
-                json.dump(map_metadata, f, indent=2)
-            
-            try:
-                # Run simulation
-                start_time = time.time()
-                results = run_uav_simulation_headless(
-                    start_pos=start_pos,
-                    goal_pos=goal_pos,
-                    obstacle_count=obstacle_count,
-                    model_path=model["path"],
-                    obstacle_positions=obstacles,
-                    return_trajectory=True
-                )
-                end_time = time.time()
+            # Generate safe start and goal positions
+            max_position_attempts = 20
+            for attempt in range(max_position_attempts):
+                start_pos = generate_random_corner_position()
+                goal_pos = generate_random_goal_position(start_pos)
                 
-                duration = end_time - start_time
+                if (check_position_safety(start_pos, obstacles) and 
+                    check_position_safety(goal_pos, obstacles)):
+                    break
                 
-                if results['success']:
-                    status = "✅ SUCCESS"
-                elif results['collision']:
-                    status = "💥 COLLISION"
-                elif results.get('out_of_bounds', False):
-                    status = "🚫 OUT OF BOUNDS"
-                elif results['timeout']:
-                    status = "⏰ TIMEOUT"
-                else:
-                    status = "❓ UNKNOWN"
+                if attempt == max_position_attempts - 1:
+                    print(f"⚠️ Using default positions")
+                    start_pos = [-3.0, -3.0, 1.0]
+                    goal_pos = [3.0, 3.0, 1.0]
+            
+            print(f"   🟢 Start: [{start_pos[0]:.1f}, {start_pos[1]:.1f}, {start_pos[2]:.1f}]")
+            print(f"   🔵 Goal:  [{goal_pos[0]:.1f}, {goal_pos[1]:.1f}, {goal_pos[2]:.1f}]")
+            print(f"   🧱 Obstacles: {len(obstacles)}")
+            
+            # Generate MuJoCo XML for this map
+            map_xml = generate_mujoco_xml(obstacles, start_pos, goal_pos)
+            
+            # Create obstacle folder name with map ID
+            obstacle_folder_name = f"obstacles_{obstacle_count}"
+            
+            # Test all three models on the SAME map
+            for model in models:
+                current_test += 1
+                print(f"\n   🤖 Testing {model['name']} ({current_test}/{total_tests})")
                 
-                print(f"      {status} | Steps: {results['steps']} | Dist: {results['final_distance']:.3f}m | Time: {duration:.1f}s")
+                # Create folder structure: agent_name/obstacles_X/map_Y/trajectories/
+                agent_dir = os.path.join(results_dir, model["name"])
+                obstacle_dir = os.path.join(agent_dir, obstacle_folder_name)
+                map_dir = os.path.join(obstacle_dir, f"map_{map_id}")
+                trajectory_dir = os.path.join(map_dir, "trajectories")
+                os.makedirs(trajectory_dir, exist_ok=True)
                 
-                # Save trajectory data
-                if 'trajectory' in results and results['trajectory']:
-                    trajectory_file = os.path.join(trajectory_dir, "trajectory.json")
-                    with open(trajectory_file, 'w') as f:
-                        json.dump(results['trajectory'], f, indent=2)
-                    print(f"      💾 Saved {len(results['trajectory'])} trajectory points")
+                # Save map XML in map folder
+                map_xml_file = os.path.join(map_dir, "map.xml")
+                with open(map_xml_file, 'w') as f:
+                    f.write(map_xml)
                 
-                # Store result
-                detailed_result = {
-                    'timestamp': datetime.now().isoformat(),
+                # Save map metadata
+                map_metadata = {
                     'obstacle_count': obstacle_count,
-                    'model': model["name"],
-                    'success': results['success'],
-                    'collision': results['collision'],
-                    'timeout': results['timeout'],
-                    'out_of_bounds': results.get('out_of_bounds', False),
-                    'steps': results['steps'],
-                    'final_distance': results['final_distance'],
-                    'duration_seconds': duration
+                    'map_id': map_id,
+                    'start_position': start_pos,
+                    'goal_position': goal_pos,
+                    'obstacles': obstacles
                 }
-                all_results.append(detailed_result)
+                map_metadata_file = os.path.join(map_dir, "map_metadata.json")
+                with open(map_metadata_file, 'w') as f:
+                    json.dump(map_metadata, f, indent=2)
                 
-            except Exception as e:
-                print(f"      ❌ ERROR: {str(e)}")
-                detailed_result = {
-                    'timestamp': datetime.now().isoformat(),
-                    'obstacle_count': obstacle_count,
-                    'model': model["name"],
-                    'success': False,
-                    'collision': False,
-                    'timeout': False,
-                    'out_of_bounds': False,
-                    'steps': 0,
-                    'final_distance': 999.0,
-                    'duration_seconds': 0,
-                    'error': str(e)
-                }
-                all_results.append(detailed_result)
+                try:
+                    # Run simulation
+                    start_time = time.time()
+                    results = run_uav_simulation_headless(
+                        start_pos=start_pos,
+                        goal_pos=goal_pos,
+                        obstacle_count=obstacle_count,
+                        model_path=model["path"],
+                        obstacle_positions=obstacles,
+                        return_trajectory=True
+                    )
+                    end_time = time.time()
+                    
+                    duration = end_time - start_time
+                    
+                    if results['success']:
+                        status = "✅ SUCCESS"
+                    elif results['collision']:
+                        status = "💥 COLLISION"
+                    elif results.get('out_of_bounds', False):
+                        status = "🚫 OUT OF BOUNDS"
+                    elif results['timeout']:
+                        status = "⏰ TIMEOUT"
+                    else:
+                        status = "❓ UNKNOWN"
+                    
+                    print(f"      {status} | Steps: {results['steps']} | Dist: {results['final_distance']:.3f}m | Time: {duration:.1f}s")
+                    
+                    # Save trajectory data
+                    if 'trajectory' in results and results['trajectory']:
+                        trajectory_file = os.path.join(trajectory_dir, "trajectory.json")
+                        with open(trajectory_file, 'w') as f:
+                            json.dump(results['trajectory'], f, indent=2)
+                        print(f"      💾 Saved {len(results['trajectory'])} trajectory points")
+                    
+                    # Store result
+                    detailed_result = {
+                        'timestamp': datetime.now().isoformat(),
+                        'obstacle_count': obstacle_count,
+                        'map_id': map_id,
+                        'model': model["name"],
+                        'success': results['success'],
+                        'collision': results['collision'],
+                        'timeout': results['timeout'],
+                        'out_of_bounds': results.get('out_of_bounds', False),
+                        'steps': results['steps'],
+                        'final_distance': results['final_distance'],
+                        'duration_seconds': duration
+                    }
+                    all_results.append(detailed_result)
+                    
+                except Exception as e:
+                    print(f"      ❌ ERROR: {str(e)}")
+                    detailed_result = {
+                        'timestamp': datetime.now().isoformat(),
+                        'obstacle_count': obstacle_count,
+                        'map_id': map_id,
+                        'model': model["name"],
+                        'success': False,
+                        'collision': False,
+                        'timeout': False,
+                        'out_of_bounds': False,
+                        'steps': 0,
+                        'final_distance': 999.0,
+                        'duration_seconds': 0,
+                        'error': str(e)
+                    }
+                    all_results.append(detailed_result)
     
     # Create summary CSV
     custom_csv_data = []
@@ -379,8 +386,9 @@ def run_comprehensive_comparison():
             steps = result['steps'] if not result['timeout'] else 5000
             
             custom_csv_data.append({
-                'map_seed': result['obstacle_count'],
+                'map_seed': f"{result['obstacle_count']}_{result['map_id']}",
                 'level': result['obstacle_count'],
+                'map_id': result['map_id'],
                 'model': result['model'],
                 'goal_reached': result['success'],
                 'number_of_steps': steps,
@@ -392,7 +400,7 @@ def run_comprehensive_comparison():
     custom_csv_file = os.path.join(results_dir, "results_summary.csv")
     with open(custom_csv_file, 'w', newline='') as f:
         if custom_csv_data:
-            fieldnames = ['map_seed', 'level', 'model', 'goal_reached', 'number_of_steps', 'collision', 'out_of_bound']
+            fieldnames = ['map_seed', 'level', 'map_id', 'model', 'goal_reached', 'number_of_steps', 'collision', 'out_of_bound']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(custom_csv_data)
@@ -400,13 +408,20 @@ def run_comprehensive_comparison():
     print(f"\n🎉 COMPARISON COMPLETE!")
     print(f"📁 Results saved to: {results_dir}/")
     print(f"   📊 Summary CSV: results_summary.csv")
+    print(f"   📈 Total tests run: {len(all_results)}")
+    print(f"   🗺️  Total maps tested: {25 * 5}")
     print(f"\n📂 Folder Structure:")
     print(f"   {results_dir}/")
     print(f"   ├── Pure_Neural/")
     print(f"   │   ├── obstacles_1/")
-    print(f"   │   │   ├── map.xml")
-    print(f"   │   │   ├── map_metadata.json")
-    print(f"   │   │   └── trajectories/trajectory.json")
+    print(f"   │   │   ├── map_1/")
+    print(f"   │   │   │   ├── map.xml")
+    print(f"   │   │   │   ├── map_metadata.json")
+    print(f"   │   │   │   └── trajectories/trajectory.json")
+    print(f"   │   │   ├── map_2/")
+    print(f"   │   │   ├── map_3/")
+    print(f"   │   │   ├── map_4/")
+    print(f"   │   │   └── map_5/")
     print(f"   │   ├── obstacles_2/")
     print(f"   │   └── ...")
     print(f"   ├── Neurosymbolic/")

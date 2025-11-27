@@ -106,18 +106,17 @@ class RDRRuleSystem:
         self.default_rule.add_exception(rule_clear_path)
         self.all_rules["R1_CLEAR_PATH"] = rule_clear_path
         
-        # Rule 2: Boundary safety - reduce velocity when close to boundaries
-        # COMMENTED OUT - Testing without boundary safety rule
-        # rule_boundary_safety = RDRRule(
-        #     rule_id="R2_BOUNDARY_SAFETY",
-        #     condition=self._condition_near_boundary,
-        #     conclusion="Near boundary: Reduce velocity for safety",
-        #     action_params={"speed_modifier": -0.25, "direction": "boundary_safe", "min_speed": 0.5}
-        # )
-        # self.default_rule.add_exception(rule_boundary_safety)
-        # self.all_rules["R2_BOUNDARY_SAFETY"] = rule_boundary_safety
+        # Rule 2: Boundary safety - reduce velocity in the direction/axis of nearby boundary
+        rule_boundary_safety = RDRRule(
+            rule_id="R2_BOUNDARY_SAFETY",
+            condition=self._condition_near_boundary,
+            conclusion="Near boundary: Reduce velocity in boundary direction",
+            action_params={"velocity_reduction": 0.4}
+        )
+        self.default_rule.add_exception(rule_boundary_safety)
+        self.all_rules["R2_BOUNDARY_SAFETY"] = rule_boundary_safety
         
-        print(f"🔧 Enhanced RDR System Initialized with {len(self.all_rules)} rules (Default + Clear Path)")
+        print(f"🔧 Enhanced RDR System Initialized with {len(self.all_rules)} rules (Default + Clear Path + Boundary Safety)")
     
     # =====================
     # Condition Functions (Simplified)
@@ -128,9 +127,15 @@ class RDRRuleSystem:
         return ctx.get('has_los_to_goal', False)
     
     def _condition_near_boundary(self, ctx: Dict[str, Any]) -> bool:
-        """Rule 2: Boundary safety - check if UAV is close to boundaries"""
+        """Rule 2: Boundary safety - check if UAV is close to world boundaries (NOT obstacles)
+        
+        This rule only activates for actual world boundaries, not for obstacles.
+        The distance_to_boundary is calculated from the UAV's position relative to 
+        the world edges (±half_world), ensuring this rule doesn't interfere with 
+        obstacle avoidance handled by PPO.
+        """
         distance_to_boundary = ctx.get('distance_to_boundary', float('inf'))
-        return distance_to_boundary < 0.8  # Within 0.8m of boundary
+        return distance_to_boundary < 0.8  # Within 0.8m of any world boundary
     
 
     
@@ -744,43 +749,35 @@ class UAVEnv(gym.Env):
             modified_vel = current_vel + speed_modifier * goal_direction
             
         elif rule.rule_id == "R2_BOUNDARY_SAFETY":
-            # Boundary safety: Reduce velocity with minimum threshold
-            min_speed = rule.action_params.get('min_speed', 0.5)
+            # Simplified boundary safety: Reduce velocity only in the axis/direction of nearby boundary
+            velocity_reduction = rule.action_params.get('velocity_reduction', 0.4)
             
-            # Get direction away from nearest boundary
             pos = context['position'][:2]  # X,Y position
             half_world = CONFIG['world_size'] / 2
             
-            # Calculate direction away from the closest boundary
-            boundary_escape_dir = np.zeros(2)
+            # Start with current velocity
+            modified_vel = current_vel.copy()
             
-            # Check each boundary and create escape vector
-            if pos[0] > half_world - 0.8:  # Close to east boundary
-                boundary_escape_dir[0] = -1.0  # Move west
-            elif pos[0] < -(half_world - 0.8):  # Close to west boundary
-                boundary_escape_dir[0] = 1.0   # Move east
-                
-            if pos[1] > half_world - 0.8:  # Close to north boundary
-                boundary_escape_dir[1] = -1.0  # Move south
-            elif pos[1] < -(half_world - 0.8):  # Close to south boundary
-                boundary_escape_dir[1] = 1.0   # Move north
+            # Reduce velocity only in the specific axis of the nearby boundary
+            # Check X-axis boundaries (east/west)
+            if pos[0] > half_world - 0.8:  # Near east boundary
+                # Reduce velocity in X direction if moving eastward
+                if modified_vel[0] > 0:
+                    modified_vel[0] = max(0, modified_vel[0] - velocity_reduction)
+            elif pos[0] < -(half_world - 0.8):  # Near west boundary
+                # Reduce velocity in X direction if moving westward
+                if modified_vel[0] < 0:
+                    modified_vel[0] = min(0, modified_vel[0] + velocity_reduction)
             
-            # Normalize escape direction
-            if np.linalg.norm(boundary_escape_dir) > 0:
-                boundary_escape_dir = boundary_escape_dir / np.linalg.norm(boundary_escape_dir)
-            
-            # Apply velocity reduction: vel = max(min_speed, vel - 0.25)
-            reduced_vel = current_vel + speed_modifier * boundary_escape_dir  # speed_modifier is -0.25
-            
-            # Ensure minimum speed constraint
-            current_speed = np.linalg.norm(reduced_vel)
-            if current_speed < min_speed and current_speed > 0:
-                reduced_vel = (reduced_vel / current_speed) * min_speed
-            elif current_speed == 0:
-                # If completely stopped, move away from boundary at min speed
-                reduced_vel = boundary_escape_dir * min_speed
-                
-            modified_vel = reduced_vel
+            # Check Y-axis boundaries (north/south)
+            if pos[1] > half_world - 0.8:  # Near north boundary
+                # Reduce velocity in Y direction if moving northward
+                if modified_vel[1] > 0:
+                    modified_vel[1] = max(0, modified_vel[1] - velocity_reduction)
+            elif pos[1] < -(half_world - 0.8):  # Near south boundary
+                # Reduce velocity in Y direction if moving southward
+                if modified_vel[1] < 0:
+                    modified_vel[1] = min(0, modified_vel[1] + velocity_reduction)
             
         
         # Clip velocity components to [-1, 1] range
