@@ -158,20 +158,38 @@ def generate_random_corner_position(world_size=8.0, flight_height=1.0):
     ]
     return random.choice(corners)
 
-def generate_random_goal_position(start_pos, world_size=8.0, flight_height=1.0):
-    """Generate random goal position ensuring it's different from start"""
+def generate_random_goal_position(start_pos, obstacles, world_size=8.0, flight_height=1.0):
+    """Generate random goal position ensuring it's different from start and away from obstacles"""
     half_world = world_size / 2 - 1.0  # 1m margin from boundary
     
-    # Try to get a goal that's sufficiently far from start
-    max_attempts = 10
+    # Try to get a goal that's sufficiently far from start and obstacles
+    max_attempts = 50
     for _ in range(max_attempts):
         x = random.uniform(-half_world, half_world)
         y = random.uniform(-half_world, half_world)
         goal_pos = [x, y, flight_height]
         
         # Ensure goal is at least 2 units away from start
-        distance = np.linalg.norm(np.array(goal_pos[:2]) - np.array(start_pos[:2]))
-        if distance >= 2.0:
+        distance_to_start = np.linalg.norm(np.array(goal_pos[:2]) - np.array(start_pos[:2]))
+        if distance_to_start < 2.0:
+            continue
+        
+        # Ensure goal is at least 0.4 units away from all obstacles
+        safe_from_obstacles = True
+        for obs in obstacles:
+            obs_pos = np.array(obs['pos'][:2])
+            distance_to_obs = np.linalg.norm(np.array(goal_pos[:2]) - obs_pos)
+            
+            if obs['shape'] == 'box':
+                min_safe_distance = max(obs['size'][0], obs['size'][1]) + 0.4
+            else:  # cylinder
+                min_safe_distance = obs['size'][0] + 0.4
+            
+            if distance_to_obs < min_safe_distance:
+                safe_from_obstacles = False
+                break
+        
+        if safe_from_obstacles:
             return goal_pos
     
     # Fallback: use opposite corner
@@ -259,10 +277,9 @@ def run_comprehensive_comparison():
             max_position_attempts = 20
             for attempt in range(max_position_attempts):
                 start_pos = generate_random_corner_position()
-                goal_pos = generate_random_goal_position(start_pos)
+                goal_pos = generate_random_goal_position(start_pos, obstacles)
                 
-                if (check_position_safety(start_pos, obstacles) and 
-                    check_position_safety(goal_pos, obstacles)):
+                if check_position_safety(start_pos, obstacles):
                     break
                 
                 if attempt == max_position_attempts - 1:
