@@ -461,14 +461,14 @@ async function main() {
 
     try {
         // Step 1: Run training script
-        console.log('🎓 Step 1: Running training script with NS PPO...');
-        const { pythonCmd } = await runTrainingScript();
-        console.log('✅ Training completed successfully!\n');
+        // console.log('🎓 Step 1: Running training script with NS PPO...');
+        // const { pythonCmd } = await runTrainingScript();
+        // console.log('✅ Training completed successfully!\n');
 
         // Step 2: Upload trained weights
-        console.log('📦 Step 2: Uploading trained weights...');
-        const weightsUploadResult = await uploadWeights();
-        console.log(`✅ Weights uploaded: ${weightsUploadResult.uploadCount} files\n`);
+        // console.log('📦 Step 2: Uploading trained weights...');
+        // const weightsUploadResult = await uploadWeights();
+        // console.log(`✅ Weights uploaded: ${weightsUploadResult.uploadCount} files\n`);
 
         // Step 3: Execute the UAV comparison test
         console.log('🚁 Step 3: Starting UAV comparison test...');
