@@ -9,7 +9,7 @@ on:
 jobs:
   generate-and-upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 2 hours timeout for long-running simulations
+    timeout-minutes: 360  # 6 hours timeout for long-running simulations
     
     steps:
       - name: Checkout repository
@@ -36,6 +36,7 @@ jobs:
         run: npm install
       
       - name: Run UAV data generation and upload
+        timeout-minutes: 350  # 5 hours and 50 minutes for the main task
         env:
           CLOUDFLARE_JURISDICTION_ENDPOINT: ${{ secrets.CLOUDFLARE_JURISDICTION_ENDPOINT }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
