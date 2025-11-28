@@ -128,6 +128,7 @@ async function runTrainingScript() {
     return new Promise((resolve, reject) => {
         const pythonCommands = ['python3', 'python', 'py'];
         let currentIndex = 0;
+        const startTime = Date.now();
 
         function tryNextCommand() {
             if (currentIndex >= pythonCommands.length) {
@@ -139,26 +140,34 @@ async function runTrainingScript() {
             console.log(`🐍 Trying ${cmd}...`);
 
             const child = exec(`${cmd} -u training.py --ppo_type ns`, {
-                env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+                maxBuffer: 50 * 1024 * 1024 // 50MB buffer to prevent buffer overflow
             });
 
             let hasOutput = false;
+            let lastOutputTime = Date.now();
 
             // Stream stdout in real-time
             child.stdout.on('data', (data) => {
                 hasOutput = true;
+                lastOutputTime = Date.now();
                 process.stdout.write(data.toString());
             });
 
             // Stream stderr in real-time
             child.stderr.on('data', (data) => {
                 const errorMsg = data.toString();
+                hasOutput = true;
+                lastOutputTime = Date.now();
                 if (!errorMsg.includes('was not found') && !errorMsg.includes('not recognized')) {
                     process.stderr.write(errorMsg);
                 }
             });
 
             child.on('error', (error) => {
+                const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+                console.error(`\n❌ Training process error after ${elapsed} minutes:`, error.message);
+                
                 if (error.message.includes('ENOENT') || error.message.includes('not found')) {
                     console.log(`   ❌ ${cmd} not available`);
                     currentIndex++;
@@ -168,16 +177,45 @@ async function runTrainingScript() {
                 }
             });
 
-            child.on('close', (code) => {
+            child.on('close', (code, signal) => {
+                const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+                
                 if (code === 0) {
+                    console.log(`\n✅ Training completed successfully after ${elapsed} minutes`);
                     resolve({ success: true, pythonCmd: cmd });
                 } else if (!hasOutput) {
                     console.log(`   ❌ ${cmd} not available`);
                     currentIndex++;
                     tryNextCommand();
                 } else {
-                    reject(new Error(`Training script exited with code ${code}`));
+                    // Detailed error logging
+                    console.error(`\n❌ Training script terminated after ${elapsed} minutes`);
+                    console.error(`   Exit code: ${code}`);
+                    console.error(`   Signal: ${signal || 'none'}`);
+                    
+                    if (code === null) {
+                        console.error(`   Reason: Process was killed (likely timeout or resource limit)`);
+                        console.error(`   This typically happens due to:`);
+                        console.error(`     - GitHub Actions 6-hour job timeout`);
+                        console.error(`     - Out of memory (runner has ~7GB available)`);
+                        console.error(`     - Manual cancellation`);
+                        reject(new Error(`Training process was killed after ${elapsed} minutes. Exit code: ${code}, Signal: ${signal || 'none'}`));
+                    } else {
+                        console.error(`   Reason: Script exited with error code ${code}`);
+                        reject(new Error(`Training script failed with exit code ${code} after ${elapsed} minutes`));
+                    }
                 }
+            });
+
+            // Log heartbeat every 5 minutes to show progress
+            const heartbeat = setInterval(() => {
+                const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+                const timeSinceLastOutput = ((Date.now() - lastOutputTime) / 1000).toFixed(0);
+                console.log(`\n💓 Heartbeat: Training running for ${elapsed} minutes (last output ${timeSinceLastOutput}s ago)`);
+            }, 5 * 60 * 1000); // Every 5 minutes
+
+            child.on('close', () => {
+                clearInterval(heartbeat);
             });
         }
 
@@ -189,6 +227,7 @@ async function executePythonScript() {
     return new Promise((resolve, reject) => {
         const pythonCommands = ['python3', 'python', 'py'];
         let currentIndex = 0;
+        const startTime = Date.now();
 
         function tryNextCommand() {
             if (currentIndex >= pythonCommands.length) {
@@ -200,7 +239,8 @@ async function executePythonScript() {
             console.log(`🐍 Trying ${cmd}...`);
 
             const child = exec(`${cmd} -u uav_comparison_test_new.py`, {
-                env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' }
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+                maxBuffer: 50 * 1024 * 1024 // 50MB buffer
             });
 
             let hasOutput = false;
@@ -214,12 +254,16 @@ async function executePythonScript() {
             // Stream stderr in real-time
             child.stderr.on('data', (data) => {
                 const errorMsg = data.toString();
+                hasOutput = true;
                 if (!errorMsg.includes('was not found') && !errorMsg.includes('not recognized')) {
                     process.stderr.write(errorMsg);
                 }
             });
 
             child.on('error', (error) => {
+                const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+                console.error(`\n❌ Comparison test error after ${elapsed} minutes:`, error.message);
+                
                 if (error.message.includes('ENOENT') || error.message.includes('not found')) {
                     console.log(`   ❌ ${cmd} not available`);
                     currentIndex++;
@@ -229,15 +273,26 @@ async function executePythonScript() {
                 }
             });
 
-            child.on('close', (code) => {
+            child.on('close', (code, signal) => {
+                const elapsed = ((Date.now() - startTime) / 1000 / 60).toFixed(2);
+                
                 if (code === 0) {
+                    console.log(`\n✅ Comparison test completed successfully after ${elapsed} minutes`);
                     resolve({ success: true, pythonCmd: cmd });
                 } else if (!hasOutput) {
                     console.log(`   ❌ ${cmd} not available`);
                     currentIndex++;
                     tryNextCommand();
                 } else {
-                    reject(new Error(`Python script exited with code ${code}`));
+                    console.error(`\n❌ Comparison test terminated after ${elapsed} minutes`);
+                    console.error(`   Exit code: ${code}`);
+                    console.error(`   Signal: ${signal || 'none'}`);
+                    
+                    if (code === null) {
+                        reject(new Error(`Comparison test was killed after ${elapsed} minutes. Signal: ${signal || 'none'}`));
+                    } else {
+                        reject(new Error(`Comparison test failed with exit code ${code} after ${elapsed} minutes`));
+                    }
                 }
             });
         }
