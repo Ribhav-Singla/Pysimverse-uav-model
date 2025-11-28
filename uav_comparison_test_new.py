@@ -174,16 +174,16 @@ def generate_random_goal_position(start_pos, obstacles, world_size=8.0, flight_h
         if distance_to_start < 2.0:
             continue
         
-        # Ensure goal is at least 0.4 units away from all obstacles
+        # Ensure goal is at least 0.8 units away from all obstacles
         safe_from_obstacles = True
         for obs in obstacles:
             obs_pos = np.array(obs['pos'][:2])
             distance_to_obs = np.linalg.norm(np.array(goal_pos[:2]) - obs_pos)
             
             if obs['shape'] == 'box':
-                min_safe_distance = max(obs['size'][0], obs['size'][1]) + 0.4
+                min_safe_distance = max(obs['size'][0], obs['size'][1]) + 0.8
             else:  # cylinder
-                min_safe_distance = obs['size'][0] + 0.4
+                min_safe_distance = obs['size'][0] + 0.8
             
             if distance_to_obs < min_safe_distance:
                 safe_from_obstacles = False
