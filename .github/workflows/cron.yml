@@ -35,14 +35,6 @@ jobs:
       - name: Install Node.js dependencies
         run: npm install
 
-      - name: Add swap space
-        run: |
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          free -h
-
       - name: Start memory monitor
         run: |
           while true; do echo "$(date): $(free -h)" >> memory.log; sleep 30; done &
