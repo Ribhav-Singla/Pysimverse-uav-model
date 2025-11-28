@@ -78,41 +78,55 @@ async function collectAgentsData() {
                 if (!obstacleStat.isDirectory()) continue;
 
                 data.agents[agentName][obstacleFolder] = {
-                    map_xml: null,
-                    map_metadata: null,
-                    trajectories: {}
+                    maps: {}
                 };
 
-                // Read map.xml
-                try {
-                    const mapXmlPath = path.join(obstaclePath, 'map.xml');
-                    const mapXml = await fs.readFile(mapXmlPath, 'utf-8');
-                    data.agents[agentName][obstacleFolder].map_xml = mapXml;
-                } catch (err) {
-                    console.log(`⚠️ No map.xml for ${agentName}/${obstacleFolder}`);
-                }
+                // Read map folders (map_1, map_2, etc.)
+                const mapFolders = await fs.readdir(obstaclePath);
 
-                // Read map_metadata.json
-                try {
-                    const metadataPath = path.join(obstaclePath, 'map_metadata.json');
-                    const metadata = await fs.readFile(metadataPath, 'utf-8');
-                    data.agents[agentName][obstacleFolder].map_metadata = JSON.parse(metadata);
-                } catch (err) {
-                    console.log(`⚠️ No metadata for ${agentName}/${obstacleFolder}`);
-                }
+                for (const mapFolder of mapFolders) {
+                    const mapPath = path.join(obstaclePath, mapFolder);
+                    const mapStat = await fs.stat(mapPath);
 
-                // Read trajectories
-                const trajectoriesPath = path.join(obstaclePath, 'trajectories');
-                try {
-                    const trajectoryFiles = await fs.readdir(trajectoriesPath);
+                    if (!mapStat.isDirectory()) continue;
 
-                    for (const trajFile of trajectoryFiles) {
-                        const trajPath = path.join(trajectoriesPath, trajFile);
-                        const trajContent = await fs.readFile(trajPath, 'utf-8');
-                        data.agents[agentName][obstacleFolder].trajectories[trajFile] = JSON.parse(trajContent);
+                    data.agents[agentName][obstacleFolder].maps[mapFolder] = {
+                        map_xml: null,
+                        map_metadata: null,
+                        trajectories: {}
+                    };
+
+                    // Read map.xml
+                    try {
+                        const mapXmlPath = path.join(mapPath, 'map.xml');
+                        const mapXml = await fs.readFile(mapXmlPath, 'utf-8');
+                        data.agents[agentName][obstacleFolder].maps[mapFolder].map_xml = mapXml;
+                    } catch (err) {
+                        console.log(`⚠️ No map.xml for ${agentName}/${obstacleFolder}/${mapFolder}`);
                     }
-                } catch (err) {
-                    console.log(`⚠️ No trajectories for ${agentName}/${obstacleFolder}`);
+
+                    // Read map_metadata.json
+                    try {
+                        const metadataPath = path.join(mapPath, 'map_metadata.json');
+                        const metadata = await fs.readFile(metadataPath, 'utf-8');
+                        data.agents[agentName][obstacleFolder].maps[mapFolder].map_metadata = JSON.parse(metadata);
+                    } catch (err) {
+                        console.log(`⚠️ No metadata for ${agentName}/${obstacleFolder}/${mapFolder}`);
+                    }
+
+                    // Read trajectories
+                    const trajectoriesPath = path.join(mapPath, 'trajectories');
+                    try {
+                        const trajectoryFiles = await fs.readdir(trajectoriesPath);
+
+                        for (const trajFile of trajectoryFiles) {
+                            const trajPath = path.join(trajectoriesPath, trajFile);
+                            const trajContent = await fs.readFile(trajPath, 'utf-8');
+                            data.agents[agentName][obstacleFolder].maps[mapFolder].trajectories[trajFile] = JSON.parse(trajContent);
+                        }
+                    } catch (err) {
+                        console.log(`⚠️ No trajectories for ${agentName}/${obstacleFolder}/${mapFolder}`);
+                    }
                 }
             }
         }
@@ -451,42 +465,48 @@ async function saveAgentsData(data) {
 
             // Upload obstacle folders
             for (const [obstacleFolder, obstacleData] of Object.entries(agentData)) {
-                const basePath = `Agents/${agentName}/${obstacleFolder}`;
+                
+                // Upload map folders (map_1, map_2, etc.)
+                if (obstacleData.maps && Object.keys(obstacleData.maps).length > 0) {
+                    for (const [mapFolder, mapData] of Object.entries(obstacleData.maps)) {
+                        const basePath = `Agents/${agentName}/${obstacleFolder}/${mapFolder}`;
 
-                // Upload map.xml
-                if (obstacleData.map_xml) {
-                    try {
-                        const key = `${basePath}/map.xml`;
-                        await uploadToR2(key, obstacleData.map_xml, 'application/xml');
-                        uploadCount++;
-                    } catch (err) {
-                        console.error(`❌ Failed to upload ${basePath}/map.xml:`, err.message);
-                        errorCount++;
-                    }
-                }
+                        // Upload map.xml
+                        if (mapData.map_xml) {
+                            try {
+                                const key = `${basePath}/map.xml`;
+                                await uploadToR2(key, mapData.map_xml, 'application/xml');
+                                uploadCount++;
+                            } catch (err) {
+                                console.error(`❌ Failed to upload ${basePath}/map.xml:`, err.message);
+                                errorCount++;
+                            }
+                        }
 
-                // Upload map_metadata.json
-                if (obstacleData.map_metadata) {
-                    try {
-                        const key = `${basePath}/map_metadata.json`;
-                        await uploadToR2(key, JSON.stringify(obstacleData.map_metadata, null, 2), 'application/json');
-                        uploadCount++;
-                    } catch (err) {
-                        console.error(`❌ Failed to upload ${basePath}/map_metadata.json:`, err.message);
-                        errorCount++;
-                    }
-                }
+                        // Upload map_metadata.json
+                        if (mapData.map_metadata) {
+                            try {
+                                const key = `${basePath}/map_metadata.json`;
+                                await uploadToR2(key, JSON.stringify(mapData.map_metadata, null, 2), 'application/json');
+                                uploadCount++;
+                            } catch (err) {
+                                console.error(`❌ Failed to upload ${basePath}/map_metadata.json:`, err.message);
+                                errorCount++;
+                            }
+                        }
 
-                // Upload trajectories
-                if (obstacleData.trajectories && Object.keys(obstacleData.trajectories).length > 0) {
-                    for (const [trajFile, trajData] of Object.entries(obstacleData.trajectories)) {
-                        try {
-                            const key = `${basePath}/trajectories/${trajFile}`;
-                            await uploadToR2(key, JSON.stringify(trajData, null, 2), 'application/json');
-                            uploadCount++;
-                        } catch (err) {
-                            console.error(`❌ Failed to upload ${basePath}/trajectories/${trajFile}:`, err.message);
-                            errorCount++;
+                        // Upload trajectories
+                        if (mapData.trajectories && Object.keys(mapData.trajectories).length > 0) {
+                            for (const [trajFile, trajData] of Object.entries(mapData.trajectories)) {
+                                try {
+                                    const key = `${basePath}/trajectories/${trajFile}`;
+                                    await uploadToR2(key, JSON.stringify(trajData, null, 2), 'application/json');
+                                    uploadCount++;
+                                } catch (err) {
+                                    console.error(`❌ Failed to upload ${basePath}/trajectories/${trajFile}:`, err.message);
+                                    errorCount++;
+                                }
+                            }
                         }
                     }
                 }
@@ -515,19 +535,19 @@ async function main() {
     console.log(`⏰ Timestamp: ${new Date().toISOString()}\n`);
 
     try {
-        // Step 1: Run training script
+        // Step 1: Run training script (COMMENTED OUT)
         // console.log('🎓 Step 1: Running training script with NS PPO...');
         // const { pythonCmd } = await runTrainingScript();
         // console.log('✅ Training completed successfully!\n');
 
-        // Step 2: Upload trained weights
+        // Step 2: Upload trained weights (COMMENTED OUT)
         // console.log('📦 Step 2: Uploading trained weights...');
         // const weightsUploadResult = await uploadWeights();
         // console.log(`✅ Weights uploaded: ${weightsUploadResult.uploadCount} files\n`);
 
         // Step 3: Execute the UAV comparison test
         console.log('🚁 Step 3: Starting UAV comparison test...');
-        await executePythonScript();
+        const { pythonCmd } = await executePythonScript();
         console.log('✅ UAV comparison test completed!\n');
 
         // Step 4: Process map XML files (add boundaries and remove reflectance)
