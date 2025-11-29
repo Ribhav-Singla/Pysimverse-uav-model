@@ -440,6 +440,66 @@ async function uploadWeights() {
     }
 }
 
+async function uploadTrainingArtifacts() {
+    try {
+        console.log('🔄 Uploading training plots and logs to Cloudflare R2...');
+        let uploadCount = 0;
+        let errorCount = 0;
+
+        // Define training artifacts to upload
+        const artifacts = [
+            // Goal achievement plots
+            { file: 'goal_achievement_NS.png', type: 'image/png', desc: 'NS PPO Goal Achievement' },
+            { file: 'goal_achievement_AR.png', type: 'image/png', desc: 'AR PPO Goal Achievement' },
+            { file: 'goal_achievement_VANILLA.png', type: 'image/png', desc: 'Vanilla PPO Goal Achievement' },
+            
+            // RDR rule usage plots (NS PPO only)
+            { file: 'rdr_rules_usage_NS.png', type: 'image/png', desc: 'RDR Rules Combined Usage' },
+            { file: 'r1_rule_usage_NS.png', type: 'image/png', desc: 'R1 Rule Usage' },
+            { file: 'r2_rule_usage_NS.png', type: 'image/png', desc: 'R2 Rule Usage' },
+            
+            // Curriculum learning logs
+            { file: 'curriculum_learning_log_ns.csv', type: 'text/csv', desc: 'NS PPO Curriculum Log' },
+            { file: 'curriculum_learning_log_ar.csv', type: 'text/csv', desc: 'AR PPO Curriculum Log' },
+            { file: 'curriculum_learning_log_vanilla.csv', type: 'text/csv', desc: 'Vanilla PPO Curriculum Log' },
+            
+            // Obstacle detection log
+            { file: 'obstacle_detection_log.csv', type: 'text/csv', desc: 'Obstacle Detection Log' }
+        ];
+
+        for (const artifact of artifacts) {
+            try {
+                // Check if file exists
+                await fs.access(artifact.file);
+                
+                const fileContent = await fs.readFile(artifact.file);
+                const key = `TrainingArtifacts/${artifact.file}`;
+                
+                await uploadToR2(key, fileContent, artifact.type);
+                console.log(`✅ Uploaded ${artifact.desc}: ${artifact.file}`);
+                uploadCount++;
+            } catch (err) {
+                // Only log error if it's not a file not found error
+                if (err.code !== 'ENOENT') {
+                    console.error(`❌ Failed to upload ${artifact.file}:`, err.message);
+                    errorCount++;
+                } else {
+                    console.log(`⚠️  ${artifact.file} not found (may not be generated for this PPO type)`);
+                }
+            }
+        }
+
+        console.log(`\n🎉 Training artifacts upload complete!`);
+        console.log(`   ✅ Successful: ${uploadCount} files`);
+        console.log(`   ⚠️  Skipped/Failed: ${errorCount} files`);
+
+        return { uploadCount, errorCount };
+    } catch (err) {
+        console.error('❌ Error uploading training artifacts:', err);
+        throw err;
+    }
+}
+
 async function saveAgentsData(data) {
     try {
         console.log('🔄 Uploading agents data to Cloudflare R2...');
@@ -536,18 +596,23 @@ async function main() {
 
     try {
         // Step 1: Run training script (COMMENTED OUT)
-        // console.log('🎓 Step 1: Running training script with NS PPO...');
-        // const { pythonCmd } = await runTrainingScript();
-        // console.log('✅ Training completed successfully!\n');
+        console.log('🎓 Step 1: Running training script with NS PPO...');
+        const { pythonCmd } = await runTrainingScript();
+        console.log('✅ Training completed successfully!\n');
 
-        // Step 2: Upload trained weights (COMMENTED OUT)
-        // console.log('📦 Step 2: Uploading trained weights...');
-        // const weightsUploadResult = await uploadWeights();
-        // console.log(`✅ Weights uploaded: ${weightsUploadResult.uploadCount} files\n`);
+        // Step 2: Upload trained weights
+        console.log('📦 Step 2: Uploading trained weights...');
+        const weightsUploadResult = await uploadWeights();
+        console.log(`✅ Weights uploaded: ${weightsUploadResult.uploadCount} files\n`);
+
+        // Step 2.5: Upload training plots and logs
+        console.log('📊 Step 2.5: Uploading training plots and logs...');
+        const artifactsUploadResult = await uploadTrainingArtifacts();
+        console.log(`✅ Training artifacts uploaded: ${artifactsUploadResult.uploadCount} files\n`);
 
         // Step 3: Execute the UAV comparison test
         console.log('🚁 Step 3: Starting UAV comparison test...');
-        const { pythonCmd } = await executePythonScript();
+        await executePythonScript();
         console.log('✅ UAV comparison test completed!\n');
 
         // Step 4: Process map XML files (add boundaries and remove reflectance)

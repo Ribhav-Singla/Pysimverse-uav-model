@@ -873,7 +873,8 @@ class UAVEnv(gym.Env):
             writer.writerow(headers)
             
         # Initialize curriculum episode logging
-        self.curriculum_log_path = "curriculum_learning_log.csv"
+        ppo_type = self.ns_cfg.get('ppo_type', 'vanilla')
+        self.curriculum_log_path = f"curriculum_learning_log_{ppo_type}.csv"
         curriculum_headers = [
             'timestamp', 'episode', 'curriculum_level', 'episode_in_level', 'map_id',
             'obstacle_count', 'start_x', 'start_y', 'start_z', 'goal_x', 'goal_y', 'goal_z',
