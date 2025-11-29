@@ -8,6 +8,7 @@
     "dotenv": "^16.4.5"
   },
   "scripts": {
-    "worker": "node worker.js"
+    "worker": "node worker.js",
+    "delete-agents": "node delete-agents-r2.js"
   }
 }
