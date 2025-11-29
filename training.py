@@ -38,7 +38,7 @@ def main():
     env_name = "UAVEnv"
     render = False
     solved_reward = 1000         # threshold to save best model (but continue training)
-    log_interval = 50          # print avg reward in the interval
+    log_interval = 5          # print avg reward in the interval
     
     # Curriculum Learning Parameters
     curriculum_learning = True
@@ -144,63 +144,33 @@ def main():
     episode_indices = []
     episode_rewards_list = []
     episode_success_list = []  # 1 if goal reached this episode else 0
+    episode_r1_usage_list = []  # Percentage of steps using R1 rule (NS PPO only)
+    episode_r2_usage_list = []  # Percentage of steps using R2 rule (NS PPO only)
 
     def save_training_plots(ppo_type, real_time=False):
         if len(episode_indices) == 0:
             return
         
-        # Calculate exponential moving averages
+        # Calculate exponential moving averages for success rate
         alpha = 0.05  # Smoothing factor (0.05 = more smoothing, 0.3 = less smoothing)
-        rewards_np = np.array(episode_rewards_list, dtype=float)
         success_np = np.array(episode_success_list, dtype=float)
         
         # Initialize EMA arrays
-        ema_rewards = np.zeros_like(rewards_np)
         ema_success = np.zeros_like(success_np)
         
         # Calculate EMA
-        ema_rewards[0] = rewards_np[0]
         ema_success[0] = success_np[0]
-        for i in range(1, len(rewards_np)):
-            ema_rewards[i] = alpha * rewards_np[i] + (1 - alpha) * ema_rewards[i-1]
+        for i in range(1, len(success_np)):
             ema_success[i] = alpha * success_np[i] + (1 - alpha) * ema_success[i-1]
         
         # Use full length arrays for plotting
-        roll_rewards = ema_rewards
         roll_success = ema_success
         x_roll = episode_indices
 
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=(12, 6))
         
-        # Reward plot
-        plt.subplot(2, 1, 1)
-        plt.scatter(episode_indices, rewards_np, color='lightgray', alpha=0.6, s=8, label='Episode Reward')
-        plt.plot(x_roll, roll_rewards, color='blue', linewidth=2, label='Reward EMA')
-        
-        # Add current episode marker if real-time
-        if real_time and len(episode_indices) > 0:
-            current_reward = rewards_np[-1]
-            current_episode = episode_indices[-1]
-            plt.scatter([current_episode], [current_reward], color='red', s=50, zorder=10, label=f'Current: {current_reward:.1f}')
-        
-        plt.xlabel('Episode')
-        plt.ylabel('Reward')
-        plt.title(f'Training Progress - Episode Rewards ({ppo_type.upper()} PPO)')
-        
-        # Dynamic y-axis range based on data
-        if len(rewards_np) > 0:
-            min_reward = min(rewards_np.min(), -100)
-            max_reward = max(rewards_np.max(), 200)
-            plt.ylim(min_reward - 50, max_reward + 50)
-        else:
-            plt.ylim(-1000, 200)
-        
-        plt.legend(loc='best')
-        plt.grid(True, alpha=0.3)
-
         # Success rate plot
-        plt.subplot(2, 1, 2)
-        plt.scatter(episode_indices, success_np, color='lightgray', alpha=0.6, s=8, label='Success (0/1)')
+        plt.scatter(episode_indices, success_np, color='black', alpha=1.0, s=8, label='Success (0/1)')
         plt.plot(x_roll, roll_success, color='green', linewidth=2, label='Success Rate EMA')
         
         # Add current success marker if real-time
@@ -211,25 +181,117 @@ def main():
             plt.scatter([current_episode], [current_success], color=success_color, s=50, zorder=10, 
                        label=f'Current: {"Success" if current_success == 1 else "Failed"}')
         
-        plt.xlabel('Episode')
-        plt.ylabel('Success Rate')
-        plt.title('Goal Achievement Rate')
+        plt.xlabel('Episode', fontsize=12)
+        plt.ylabel('Goal Achievement', fontsize=12)
+        plt.title(f'Goal Achievement Progress - {ppo_type.upper()} PPO', fontsize=14, fontweight='bold')
         plt.ylim(-0.05, 1.05)
-        plt.legend(loc='best')
-        plt.grid(True, alpha=0.3)
+        plt.legend(loc='best', frameon=True, fancybox=True, shadow=True, framealpha=0.95)
         plt.tight_layout()
         
-        # Include PPO type in plot filename
-        if real_time:
-            plot_filename = f'training_live_{ppo_type}_ppo.png'
-        else:
-            plot_filename = f'training_metrics_{ppo_type}_ppo.png'
+        # Professional filename
+        plot_filename = f'goal_achievement_{ppo_type.upper()}.png'
         
         plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
         plt.close()
         
         if real_time:
-            print(f"📊 Real-time plot updated: {plot_filename}")
+            print(f"📊 Plot updated: {plot_filename}")
+
+    def save_r2_usage_plot(ppo_type):
+        """Plot R1 and R2 rule usage percentage over episodes (NS PPO only)"""
+        if ppo_type != 'ns' or len(episode_indices) == 0:
+            return
+        
+        r1_usage_np = np.array(episode_r1_usage_list, dtype=float)
+        r2_usage_np = np.array(episode_r2_usage_list, dtype=float)
+        
+        # Combined plot with both R1 and R2
+        plt.figure(figsize=(12, 6))
+        
+        # Plot R1 line chart
+        plt.plot(episode_indices, r1_usage_np, color='green', linewidth=2, marker='s', 
+                markersize=3, alpha=0.7, label='R1 Clear Path %')
+        
+        # Plot R2 line chart
+        plt.plot(episode_indices, r2_usage_np, color='blue', linewidth=2, marker='o', 
+                markersize=3, alpha=0.7, label='R2 Boundary Safety %')
+        
+        # Add moving average for R1
+        if len(r1_usage_np) >= 10:
+            window = min(20, len(r1_usage_np) // 5)
+            moving_avg_r1 = np.convolve(r1_usage_np, np.ones(window)/window, mode='valid')
+            x_avg = episode_indices[window-1:]
+            plt.plot(x_avg, moving_avg_r1, color='darkgreen', linewidth=2.5, 
+                    label=f'R1 MA (window={window})', alpha=0.8, linestyle='--')
+        
+        # Add moving average for R2
+        if len(r2_usage_np) >= 10:
+            window = min(20, len(r2_usage_np) // 5)
+            moving_avg_r2 = np.convolve(r2_usage_np, np.ones(window)/window, mode='valid')
+            x_avg = episode_indices[window-1:]
+            plt.plot(x_avg, moving_avg_r2, color='darkblue', linewidth=2.5, 
+                    label=f'R2 MA (window={window})', alpha=0.8, linestyle='--')
+        
+        plt.xlabel('Episode Number', fontsize=12)
+        plt.ylabel('Rule Usage (%)', fontsize=12)
+        plt.title('RDR Rules Usage - NS PPO', fontsize=14, fontweight='bold')
+        plt.ylim(-5, 105)
+        plt.legend(loc='best', frameon=True, fancybox=True, shadow=True, framealpha=0.95)
+        plt.tight_layout()
+        
+        plot_filename = 'rdr_rules_usage_NS.png'
+        plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"📊 RDR rules usage plot saved: {plot_filename}")
+        
+        # Separate R1 plot
+        plt.figure(figsize=(12, 6))
+        plt.plot(episode_indices, r1_usage_np, color='green', linewidth=2, marker='s', 
+                markersize=3, alpha=0.7, label='R1 Clear Path %')
+        
+        if len(r1_usage_np) >= 10:
+            window = min(20, len(r1_usage_np) // 5)
+            moving_avg_r1 = np.convolve(r1_usage_np, np.ones(window)/window, mode='valid')
+            x_avg = episode_indices[window-1:]
+            plt.plot(x_avg, moving_avg_r1, color='darkgreen', linewidth=2.5, 
+                    label=f'R1 MA (window={window})', alpha=0.8, linestyle='--')
+        
+        plt.xlabel('Episode Number', fontsize=12)
+        plt.ylabel('R1 Rule Usage (%)', fontsize=12)
+        plt.title('R1 Clear Path Rule Usage - NS PPO', fontsize=14, fontweight='bold')
+        plt.ylim(-5, 105)
+        plt.legend(loc='best', frameon=True, fancybox=True, shadow=True, framealpha=0.95)
+        plt.tight_layout()
+        
+        r1_plot_filename = 'r1_rule_usage_NS.png'
+        plt.savefig(r1_plot_filename, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"📊 R1 usage plot saved: {r1_plot_filename}")
+        
+        # Separate R2 plot
+        plt.figure(figsize=(12, 6))
+        plt.plot(episode_indices, r2_usage_np, color='blue', linewidth=2, marker='o', 
+                markersize=3, alpha=0.7, label='R2 Boundary Safety %')
+        
+        if len(r2_usage_np) >= 10:
+            window = min(20, len(r2_usage_np) // 5)
+            moving_avg_r2 = np.convolve(r2_usage_np, np.ones(window)/window, mode='valid')
+            x_avg = episode_indices[window-1:]
+            plt.plot(x_avg, moving_avg_r2, color='darkblue', linewidth=2.5, 
+                    label=f'R2 MA (window={window})', alpha=0.8, linestyle='--')
+        
+        plt.xlabel('Episode Number', fontsize=12)
+        plt.ylabel('R2 Rule Usage (%)', fontsize=12)
+        plt.title('R2 Boundary Safety Rule Usage - NS PPO', fontsize=14, fontweight='bold')
+        plt.ylim(-5, 105)
+        plt.legend(loc='best', frameon=True, fancybox=True, shadow=True, framealpha=0.95)
+        plt.tight_layout()
+        
+        r2_plot_filename = 'r2_rule_usage_NS.png'
+        plt.savefig(r2_plot_filename, dpi=150, bbox_inches='tight')
+        plt.close()
+        print(f"📊 R2 usage plot saved: {r2_plot_filename}")
+
 
     def plot_episode_reward(episode_num, reward, ppo_type):
         """Quick plot update after each episode"""
@@ -339,7 +401,7 @@ def main():
         print(f"     Level {i+1} ({i+1} obstacles): {episodes} episodes")
     print(f"   - 20 different maps per obstacle level")
     print("📊 LOGGING ENABLED")
-    print("   - Episode data: 'curriculum_learning_log.csv'")
+    print(f"   - Episode data: 'curriculum_learning_log_{ppo_type}.csv'")
     print("   - Obstacle detections: 'obstacle_detection_log.csv'")
     print("   - Detection threshold: 1.5m")
     print("   - CSV files will be refreshed for each training session")
@@ -408,6 +470,11 @@ def main():
         episode_reward = 0
         episodes_in_current_level += 1
         
+        # Track RDR rule usage for NS PPO
+        r1_step_count = 0
+        r2_step_count = 0
+        total_steps_in_episode = 0
+        
         # OPTIMIZED: Adaptive action std decay (linear decay from 1.0 to 0.1)
         if i_episode % action_std_decay_freq == 0:
             # Linear decay: std = max(min_std, initial_std * (1 - progress))
@@ -450,6 +517,13 @@ def main():
                     final_action = sym
                     action_source = "RDR"
                     
+                    # Track RDR rule usage
+                    if ppo_type == 'ns' and env.current_rule:
+                        if env.current_rule.rule_id == "R1_CLEAR_PATH":
+                            r1_step_count += 1
+                        elif env.current_rule.rule_id == "R2_BOUNDARY_SAFETY":
+                            r2_step_count += 1
+                    
                     if (t % 100) == 0:
                         rule_id = env.current_rule.rule_id if env.current_rule else "Unknown"
                         print(f"[RDR] Episode {i_episode} Step {t}: Using RDR rule {rule_id}")
@@ -485,6 +559,9 @@ def main():
             
             # Env expects flat action; it will flatten anyway, but ensure (action_dim,)
             state, reward, done, truncated, _ = env.step(final_action.flatten())
+            
+            # Track total steps for R2 usage calculation
+            total_steps_in_episode += 1
 
             # Saving reward and is_terminals:
             memory.rewards.append(reward)
@@ -547,6 +624,16 @@ def main():
                 break
         
         episode_length = t + 1
+        
+        # Calculate RDR rule usage percentages for NS PPO
+        if ppo_type == 'ns':
+            r1_usage_percentage = (r1_step_count / total_steps_in_episode * 100) if total_steps_in_episode > 0 else 0.0
+            r2_usage_percentage = (r2_step_count / total_steps_in_episode * 100) if total_steps_in_episode > 0 else 0.0
+            episode_r1_usage_list.append(r1_usage_percentage)
+            episode_r2_usage_list.append(r2_usage_percentage)
+        else:
+            episode_r1_usage_list.append(0.0)  # Not applicable for other PPO types
+            episode_r2_usage_list.append(0.0)  # Not applicable for other PPO types
         
         # Track reward and log curriculum episode data
         if curriculum_learning:
@@ -663,6 +750,10 @@ def main():
             # Save comprehensive metrics plot periodically
             save_training_plots(ppo_type, real_time=False)
             print(f"📊 Comprehensive training plots updated at episode {i_episode}")
+            
+            # Save R2 usage plot for NS PPO
+            if ppo_type == 'ns':
+                save_r2_usage_plot(ppo_type)
 
 if __name__ == '__main__':
     main()

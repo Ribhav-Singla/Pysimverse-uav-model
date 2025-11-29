@@ -3,7 +3,8 @@ import xml.etree.ElementTree as ET
 
 # Define the agents and obstacle counts
 agents = ['AR_PPO', 'Neurosymbolic', 'Pure_Neural']
-obstacle_counts = range(1, 16)  # 1 to 15
+obstacle_counts = range(1, 26)  # 1 to 25
+maps_per_level = 5  # 5 maps per obstacle level
 
 # Boundary parameters (based on ground plane size 4.0)
 boundary_size = 4.0
@@ -26,7 +27,7 @@ def add_boundaries_to_xml(xml_path):
         # Check if boundaries already exist and remove them
         existing_boundaries = [child for child in worldbody if child.get('name', '').startswith('boundary_')]
         if existing_boundaries:
-            print(f"Removing old boundaries from {xml_path}...")
+            # Silently remove old boundaries
             for boundary in existing_boundaries:
                 worldbody.remove(boundary)
         
@@ -69,7 +70,7 @@ def add_boundaries_to_xml(xml_path):
         
         # Write the modified XML back to file
         tree.write(xml_path, encoding='utf-8', xml_declaration=True)
-        print(f"Added boundaries to {xml_path}")
+        # Success - no print for cleaner output
         return True
         
     except Exception as e:
@@ -77,26 +78,45 @@ def add_boundaries_to_xml(xml_path):
         return False
 
 def main():
-    """Add boundaries to all map.xml files."""
+    """Add boundaries to all map.xml files in the new folder structure."""
     agents_dir = 'Agents'
     total_processed = 0
     total_modified = 0
+    total_not_found = 0
+    
+    print("🔧 Adding boundaries to map.xml files...")
+    print(f"📊 Processing {len(agents)} agents × {len(list(obstacle_counts))} obstacle levels × {maps_per_level} maps")
+    print("=" * 60)
     
     for agent in agents:
+        print(f"\n🤖 Processing agent: {agent}")
+        agent_processed = 0
+        agent_modified = 0
+        
         for obstacle_count in obstacle_counts:
-            xml_path = os.path.join(agents_dir, agent, f'obstacles_{obstacle_count}', 'map.xml')
-            
-            if os.path.exists(xml_path):
-                total_processed += 1
-                if add_boundaries_to_xml(xml_path):
-                    total_modified += 1
-            else:
-                print(f"File not found: {xml_path}")
+            # Process all maps for this obstacle level
+            for map_id in range(1, maps_per_level + 1):
+                xml_path = os.path.join(agents_dir, agent, f'obstacles_{obstacle_count}', f'map_{map_id}', 'map.xml')
+                
+                if os.path.exists(xml_path):
+                    total_processed += 1
+                    agent_processed += 1
+                    if add_boundaries_to_xml(xml_path):
+                        total_modified += 1
+                        agent_modified += 1
+                else:
+                    total_not_found += 1
+                    # Only print if verbose mode needed
+                    # print(f"File not found: {xml_path}")
+        
+        print(f"   ✓ {agent}: {agent_modified}/{agent_processed} files modified")
     
-    print(f"\n=== Summary ===")
-    print(f"Total files processed: {total_processed}")
+    print(f"\n{'=' * 60}")
+    print(f"=== Summary ===")
+    print(f"Total files found: {total_processed}")
     print(f"Total files modified: {total_modified}")
-    print(f"Total files skipped: {total_processed - total_modified}")
+    print(f"Total files not found: {total_not_found}")
+    print(f"Success rate: {total_modified}/{total_processed} ({100*total_modified/total_processed if total_processed > 0 else 0:.1f}%)")
 
 if __name__ == "__main__":
     main()
