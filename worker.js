@@ -590,6 +590,80 @@ async function saveAgentsData(data) {
     }
 }
 
+async function generateTrajectoryVisualizations(pythonCmd) {
+    return new Promise((resolve, reject) => {
+        console.log('🎨 Generating trajectory visualizations...');
+        console.log('   Creating top-down views with RDR rule color-coding...');
+
+        // Generate visualizations for high difficulty levels (20-25) with all 5 maps
+        const levels = [20, 21, 22, 23, 24, 25];
+        const commands = levels.map(level => 
+            `${pythonCmd} -u visualize_trajectory.py --level ${level} --multiple`
+        ).join(' && ');
+
+        const child = exec(commands, {
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+            maxBuffer: 50 * 1024 * 1024
+        });
+
+        child.stdout.on('data', (data) => {
+            process.stdout.write('   ' + data.toString());
+        });
+
+        child.stderr.on('data', (data) => {
+            process.stderr.write('   ' + data.toString());
+        });
+
+        child.on('close', (code) => {
+            if (code === 0) {
+                console.log('✅ Trajectory visualizations generated');
+                resolve({ success: true });
+            } else {
+                reject(new Error(`visualize_trajectory.py exited with code ${code}`));
+            }
+        });
+
+        child.on('error', (error) => {
+            reject(error);
+        });
+    });
+}
+
+async function uploadTrajectoryVisualizations() {
+    try {
+        console.log('🔄 Uploading trajectory visualizations to Cloudflare R2...');
+        let uploadCount = 0;
+        let errorCount = 0;
+
+        // Find all trajectory visualization PNG files
+        const files = await fs.readdir('.');
+        const trajectoryFiles = files.filter(f => f.startsWith('trajectory_visualization_NS_'));
+
+        for (const file of trajectoryFiles) {
+            try {
+                const fileContent = await fs.readFile(file);
+                const key = `TrajectoryVisualizations/${file}`;
+                
+                await uploadToR2(key, fileContent, 'image/png');
+                console.log(`✅ Uploaded ${file}`);
+                uploadCount++;
+            } catch (err) {
+                console.error(`❌ Failed to upload ${file}:`, err.message);
+                errorCount++;
+            }
+        }
+
+        console.log(`\n🎉 Trajectory visualizations upload complete!`);
+        console.log(`   ✅ Successful: ${uploadCount} files`);
+        console.log(`   ❌ Failed: ${errorCount} files`);
+
+        return { uploadCount, errorCount };
+    } catch (err) {
+        console.error('❌ Error uploading trajectory visualizations:', err);
+        throw err;
+    }
+}
+
 async function main() {
     console.log('🚀 Starting UAV Training, Data Generation and Upload Process...');
     console.log(`⏰ Timestamp: ${new Date().toISOString()}\n`);
@@ -624,6 +698,16 @@ async function main() {
         const agentsData = await collectAgentsData();
 
         console.log(`📦 Data collected: ${Object.keys(agentsData.agents).length} agents`);
+
+        // Step 5.5: Generate trajectory visualizations
+        console.log('🎨 Step 5.5: Generating trajectory visualizations...');
+        await generateTrajectoryVisualizations(pythonCmd);
+        console.log('✅ Trajectory visualizations generated!\n');
+
+        // Step 5.6: Upload trajectory visualizations
+        console.log('📊 Step 5.6: Uploading trajectory visualizations...');
+        const trajVizUploadResult = await uploadTrajectoryVisualizations();
+        console.log(`✅ Trajectory visualizations uploaded: ${trajVizUploadResult.uploadCount} files\n`);
 
         // Step 6: Upload to Cloudflare R2
         console.log('☁️  Step 6: Uploading agents data...');
