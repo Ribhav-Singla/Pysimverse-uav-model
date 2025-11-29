@@ -153,7 +153,7 @@ async function runTrainingScript() {
             const cmd = pythonCommands[currentIndex];
             console.log(`🐍 Trying ${cmd}...`);
 
-            const child = exec(`${cmd} -u training.py --ppo_type ns`, {
+            const child = exec(`${cmd} -u training.py --ppo_type ar`, {
                 env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
                 maxBuffer: 50 * 1024 * 1024 // 50MB buffer to prevent buffer overflow
             });
