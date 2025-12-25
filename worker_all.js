@@ -632,23 +632,23 @@ async function main() {
         console.log(`✅ Training artifacts uploaded: ${artifactsUploadResult.uploadCount} files\n`);
 
         // Step 3: Execute the UAV comparison test
-        // console.log('🚁 Step 3: Starting UAV comparison test...');
-        // await executePythonScript();
-        // console.log('✅ UAV comparison test completed!\n');
+        console.log('🚁 Step 3: Starting UAV comparison test...');
+        await executePythonScript();
+        console.log('✅ UAV comparison test completed!\n');
 
-        // // Step 4: Process map XML files (add boundaries and remove reflectance)
-        // console.log('🔧 Step 4: Processing map XML files...');
-        // await processMapXMLFiles(pythonCmd);
+        // Step 4: Process map XML files (add boundaries and remove reflectance)
+        console.log('🔧 Step 4: Processing map XML files...');
+        await processMapXMLFiles(pythonCmd);
 
         // Step 5: Collect all generated data
-        // console.log('📊 Step 5: Collecting generated data...');
-        // const agentsData = await collectAgentsData();
+        console.log('📊 Step 5: Collecting generated data...');
+        const agentsData = await collectAgentsData();
 
-        // console.log(`📦 Data collected: ${Object.keys(agentsData.agents).length} agents`);
+        console.log(`📦 Data collected: ${Object.keys(agentsData.agents).length} agents`);
 
-        // // Step 6: Upload to Cloudflare R2
-        // console.log('☁️  Step 6: Uploading agents data...');
-        // const uploadResult = await saveAgentsData(agentsData);
+        // Step 6: Upload to Cloudflare R2
+        console.log('☁️  Step 6: Uploading agents data...');
+        const uploadResult = await saveAgentsData(agentsData);
 
         console.log('\n✅ Process completed successfully!');
         console.log(`📊 Total files uploaded: ${uploadResult.uploadCount}`);
