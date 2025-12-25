@@ -9,6 +9,7 @@ matplotlib.use('Agg')  # non-interactive backend for saving plots
 import matplotlib.pyplot as plt
 from collections import deque
 import time
+import pickle
 
 class Memory:
     def __init__(self):
@@ -635,19 +636,9 @@ def main():
             episode_r1_usage_list.append(0.0)  # Not applicable for other PPO types
             episode_r2_usage_list.append(0.0)  # Not applicable for other PPO types
         
-        # Track reward and log curriculum episode data
+        # Track reward
         if curriculum_learning:
             level_rewards.append(episode_reward)
-            # Log curriculum episode data
-            termination_info = getattr(env, 'last_termination_info', {})
-            termination_info['episode_length'] = episode_length
-            env.log_curriculum_episode(
-                episode_num=i_episode,
-                episode_in_level=episodes_in_current_level,
-                episode_reward=episode_reward,
-                episode_length=episode_length,
-                termination_info=termination_info
-            )
 
         # === Metrics tracking ===
         episode_indices.append(i_episode)
@@ -754,6 +745,17 @@ def main():
             # Save R2 usage plot for NS PPO
             if ppo_type == 'ns':
                 save_r2_usage_plot(ppo_type)
+    
+    # Save episode rewards to pickle file
+    rewards_data = {
+        'episode_rewards': episode_rewards_list,
+        'episode_indices': episode_indices,
+        'ppo_type': ppo_type
+    }
+    rewards_filename = f'episode_rewards_{ppo_type}.pkl'
+    with open(rewards_filename, 'wb') as f:
+        pickle.dump(rewards_data, f)
+    print(f"\n💾 Episode rewards saved to {rewards_filename}")
 
 if __name__ == '__main__':
     main()

@@ -107,16 +107,16 @@ class RDRRuleSystem:
         self.all_rules["R1_CLEAR_PATH"] = rule_clear_path
         
         # Rule 2: Boundary safety - reduce velocity in the direction/axis of nearby boundary
-        rule_boundary_safety = RDRRule(
-            rule_id="R2_BOUNDARY_SAFETY",
-            condition=self._condition_near_boundary,
-            conclusion="Near boundary: Reduce velocity in boundary direction",
-            action_params={"velocity_reduction": 0.4}
-        )
-        self.default_rule.add_exception(rule_boundary_safety)
-        self.all_rules["R2_BOUNDARY_SAFETY"] = rule_boundary_safety
+        # rule_boundary_safety = RDRRule(
+        #     rule_id="R2_BOUNDARY_SAFETY",
+        #     condition=self._condition_near_boundary,
+        #     conclusion="Near boundary: Reduce velocity in boundary direction",
+        #     action_params={"velocity_reduction": 0.4}
+        # )
+        # self.default_rule.add_exception(rule_boundary_safety)
+        # self.all_rules["R2_BOUNDARY_SAFETY"] = rule_boundary_safety
         
-        print(f"🔧 Enhanced RDR System Initialized with {len(self.all_rules)} rules (Default + Clear Path + Boundary Safety)")
+        # print(f"🔧 Enhanced RDR System Initialized with {len(self.all_rules)} rules (Default + Clear Path + Boundary Safety)")
     
     # =====================
     # Condition Functions (Simplified)
@@ -148,7 +148,7 @@ class RDRRuleSystem:
         # Check both clear path and boundary safety rules (not the default rule R0)
         specific_rules = [
             "R1_CLEAR_PATH",
-            "R2_BOUNDARY_SAFETY"
+            # "R2_BOUNDARY_SAFETY"
         ]
         
         # Check if any specific rule condition is met
@@ -871,22 +871,6 @@ class UAVEnv(gym.Env):
         with open(self.csv_log_path, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(headers)
-            
-        # Initialize curriculum episode logging
-        ppo_type = self.ns_cfg.get('ppo_type', 'vanilla')
-        self.curriculum_log_path = f"curriculum_learning_log_{ppo_type}.csv"
-        curriculum_headers = [
-            'timestamp', 'episode', 'curriculum_level', 'episode_in_level', 'map_id',
-            'obstacle_count', 'start_x', 'start_y', 'start_z', 'goal_x', 'goal_y', 'goal_z',
-            'episode_reward', 'episode_length', 'termination_reason',
-            'goal_reached', 'collision_detected', 'out_of_bounds', 'final_position_x',
-            'final_position_y', 'final_position_z', 'goal_distance', 'final_velocity'
-        ]
-        
-        # Always create/overwrite the curriculum log file
-        with open(self.curriculum_log_path, 'w', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(curriculum_headers)
                 
     def log_obstacle_detection(self, uav_pos, obstacle_pos, obstacle_type, obstacle_id, 
                              detection_distance, detection_angle, prev_vel, new_vel):
@@ -928,41 +912,8 @@ class UAVEnv(gym.Env):
     
     def log_curriculum_episode(self, episode_num, episode_in_level, episode_reward, 
                              episode_length, termination_info):
-        """Log curriculum learning episode data"""
-        if not self.curriculum_learning:
-            return
-            
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        curriculum_info = self.get_curriculum_info()
-        map_info = curriculum_info['current_map_info'] if curriculum_info else {}
-        
-        # Extract termination information
-        final_pos = termination_info.get('final_position', [0, 0, 0])
-        goal_reached = termination_info.get('termination_reason') == 'goal_reached'
-        collision = termination_info.get('collision_detected', False)
-        out_of_bounds = termination_info.get('out_of_bounds', False)
-        
-        row = [
-            timestamp, episode_num, 
-            curriculum_info['current_level'] if curriculum_info else 0,
-            episode_in_level,
-            map_info.get('map_id', 0),
-            map_info.get('obstacle_count', 0),
-            CONFIG['start_pos'][0], CONFIG['start_pos'][1], CONFIG['start_pos'][2],
-            CONFIG['goal_pos'][0], CONFIG['goal_pos'][1], CONFIG['goal_pos'][2],
-            episode_reward, episode_length,
-            termination_info.get('termination_reason', 'unknown'),
-            goal_reached, collision, out_of_bounds,
-            final_pos[0] if len(final_pos) > 0 else 0,
-            final_pos[1] if len(final_pos) > 1 else 0,
-            final_pos[2] if len(final_pos) > 2 else 0,
-            termination_info.get('goal_distance', 0),
-            termination_info.get('final_velocity', 0)
-        ]
-        
-        with open(self.curriculum_log_path, 'a', newline='') as csvfile:
-            writer = csv.writer(csvfile)
-            writer.writerow(row)
+        """Log curriculum learning episode data - disabled"""
+        pass
     
     def set_curriculum_level(self, obstacle_level):
         """Set the current curriculum level (1-10 obstacles)"""

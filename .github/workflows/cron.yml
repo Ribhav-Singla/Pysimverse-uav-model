@@ -46,7 +46,7 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-        run: npm run worker
+        run: npm run worker_all.js
 
       - name: Check for OOM kills after failure
         if: failure()
