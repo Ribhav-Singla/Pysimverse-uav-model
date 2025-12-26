@@ -31,7 +31,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train UAV with different PPO variants')
     parser.add_argument('--ppo_type', type=str, choices=['vanilla', 'ar', 'ns'], default='ns',
                         help='PPO variant to train: vanilla (basic PPO), ar (PPO with additional rewards), ns (neurosymbolic PPO) (default: ns)')
-    parser.add_argument('--episodes', type=int, default=50,
+    parser.add_argument('--episodes', type=int, default=50
+    ,
                         help='Episodes per curriculum level (default: 50)')
     args = parser.parse_args()
     
@@ -44,7 +45,7 @@ def main():
     # Curriculum Learning Parameters
     curriculum_learning = True
     episodes_per_level_count = args.episodes  # Episodes per curriculum level (from command line)
-    total_levels = 10           # Obstacle levels 1-10
+    total_levels = 10          # Obstacle levels 1-10
     
     # Set equal episodes for each level
     episodes_per_level = [episodes_per_level_count] * total_levels

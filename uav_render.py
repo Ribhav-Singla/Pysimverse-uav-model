@@ -9,13 +9,11 @@ import torch
 import os
 import sys
 from ppo_agent import PPOAgent
-from uav_env import UAVEnv, CONFIG as ENV_CONFIG
+from uav_env import UAVEnv, CONFIG
 
 # Define the path to your XML model
 MODEL_PATH = "environment.xml"
 
-# Use the same configuration as the training environment
-CONFIG = ENV_CONFIG.copy()
 # Add render-specific parameters if not present
 if 'path_trail_length' not in CONFIG:
     CONFIG['path_trail_length'] = 500
@@ -283,11 +281,52 @@ def main():
     print("🏗️ Using training environment obstacles...")
     obstacles = env.obstacles
     
+    # Print obstacle array information
+    print(f"\n📦 Obstacle Array Dimensions: {len(obstacles)} obstacles")
+    print("=" * 80)
+    for i, obs in enumerate(obstacles):
+        print(f"Obstacle {i+1}:")
+        print(f"  Shape: {obs['shape']}")
+        print(f"  Position: [{obs['pos'][0]:.2f}, {obs['pos'][1]:.2f}, {obs['pos'][2]:.2f}]")
+        if obs['shape'] == 'box':
+            print(f"  Size: [{obs['size'][0]:.2f}, {obs['size'][1]:.2f}, {obs['size'][2]:.2f}]")
+        else:  # cylinder
+            print(f"  Size: [radius={obs['size'][0]:.2f}, height={obs['size'][1]:.2f}]")
+        print(f"  Color: {obs['color']}")
+        print(f"  ID: {obs['id']}")
+    print("=" * 80 + "\n")
+    
     # The positions are already in the CONFIG dictionary from uav_env
     # No need to update CONFIG as env uses the same CONFIG
     
     print(f"✅ Start position: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}, {CONFIG['start_pos'][2]:.1f}]")
     print(f"✅ Goal position: [{CONFIG['goal_pos'][0]:.1f}, {CONFIG['goal_pos'][1]:.1f}, {CONFIG['goal_pos'][2]:.1f}]")
+    
+    # Calculate nearest obstacle distances
+    min_start_distance = float('inf')
+    min_goal_distance = float('inf')
+    
+    for obs in obstacles:
+        obs_pos = np.array(obs['pos'])
+        
+        # Calculate distance from start
+        start_dist = np.linalg.norm(CONFIG['start_pos'][:2] - obs_pos[:2])
+        if obs['shape'] == 'box':
+            start_dist -= max(obs['size'][0], obs['size'][1])
+        elif obs['shape'] == 'cylinder':
+            start_dist -= obs['size'][0]
+        min_start_distance = min(min_start_distance, start_dist)
+        
+        # Calculate distance from goal
+        goal_dist = np.linalg.norm(CONFIG['goal_pos'][:2] - obs_pos[:2])
+        if obs['shape'] == 'box':
+            goal_dist -= max(obs['size'][0], obs['size'][1])
+        elif obs['shape'] == 'cylinder':
+            goal_dist -= obs['size'][0]
+        min_goal_distance = min(min_goal_distance, goal_dist)
+    
+    print(f"📏 Nearest obstacle to START: {min_start_distance:.2f}m")
+    print(f"📏 Nearest obstacle to GOAL: {min_goal_distance:.2f}m")
     
     # Create environment XML
     EnvironmentGenerator.create_xml_with_obstacles(obstacles)

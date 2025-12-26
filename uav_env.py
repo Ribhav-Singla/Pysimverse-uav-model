@@ -26,7 +26,7 @@ CONFIG = {
     'world_size': 8.0,
     'obstacle_height': 2.0,
     'uav_flight_height': 1.0,  # Half of obstacle height
-    'static_obstacles': 8,
+    'static_obstacles': 25,
     'min_obstacle_size': 0.05,
     'max_obstacle_size': 0.12,
     'collision_distance': 0.1,
@@ -429,7 +429,87 @@ class UAVEnv(gym.Env):
         
         # Generate initial obstacles
         self.obstacles = EnvironmentGenerator.generate_obstacles() if not curriculum_learning else []
+        
+        # CRITICAL: Always initialize start_pos and goal_pos before any other operations
+        # Set safe start and goal positions if not using curriculum learning
+        if not curriculum_learning:
+            print("\n🔍 Goal Position Generation Strategy:")
+            print("=" * 60)
+            # Use grid-based safe position generation for reliability
+            print("📊 Attempting: Grid-Based Safe Position Generation...")
+            start, goal = self._generate_safe_positions_grid(self.obstacles)
+            if start is not None and goal is not None:
+                print("✅ SUCCESS: Using Grid-Based Method")
+                CONFIG['start_pos'] = start
+                CONFIG['goal_pos'] = goal
+                print(f"   🔍 Verification - CONFIG now has:")
+                print(f"      Start: {CONFIG['start_pos']}")
+                print(f"      Goal: {CONFIG['goal_pos']}")
+            else:
+                # Fallback to old method
+                print("⚠️  Grid method failed, falling back to Corner-Based Method...")
+                CONFIG['goal_pos'] = self._get_random_goal_position(self.obstacles)
+                CONFIG['start_pos'] = self._get_safe_start_position(self.obstacles)
+                print("✅ Using Corner-Based Fallback Method")
+            print("=" * 60)
+        else:
+            # For curriculum learning, positions will be set by load_curriculum_map()
+            # Initialize with safe defaults until map is loaded
+            if CONFIG['start_pos'] is None:
+                CONFIG['start_pos'] = np.array([-3.0, -3.0, 1.0])
+            if CONFIG['goal_pos'] is None:
+                CONFIG['goal_pos'] = np.array([3.0, 3.0, 1.0])
+        
+        # Safety check: Ensure CONFIG values are set before proceeding
+        if CONFIG['start_pos'] is None or CONFIG['goal_pos'] is None:
+            raise ValueError("CONFIG start_pos and goal_pos must be initialized before XML creation!")
+        
+        print(f"   📄 Before XML creation, CONFIG values:")
+        print(f"      Start: {CONFIG['start_pos']}")
+        print(f"      Goal: {CONFIG['goal_pos']}")
+        
         self.load_curriculum_map() if curriculum_learning else EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+        
+        print(f"   📄 After XML creation, CONFIG values:")
+        print(f"      Start: {CONFIG['start_pos']}")
+        print(f"      Goal: {CONFIG['goal_pos']}")
+        
+        # Calculate nearest obstacle distances for safety verification
+        min_start_distance = float('inf')
+        min_goal_distance = float('inf')
+        
+        for obs in self.obstacles:
+            obs_pos = np.array(obs['pos'])
+            
+            # Calculate distance from start
+            start_dist = np.linalg.norm(CONFIG['start_pos'][:2] - obs_pos[:2])
+            if obs['shape'] == 'box':
+                start_dist -= max(obs['size'][0], obs['size'][1])
+            elif obs['shape'] == 'cylinder':
+                start_dist -= obs['size'][0]
+            min_start_distance = min(min_start_distance, start_dist)
+            
+            # Calculate distance from goal
+            goal_dist = np.linalg.norm(CONFIG['goal_pos'][:2] - obs_pos[:2])
+            if obs['shape'] == 'box':
+                goal_dist -= max(obs['size'][0], obs['size'][1])
+            elif obs['shape'] == 'cylinder':
+                goal_dist -= obs['size'][0]
+            min_goal_distance = min(min_goal_distance, goal_dist)
+        
+        print(f"   📏 Nearest obstacle to START: {min_start_distance:.2f}m")
+        print(f"   📏 Nearest obstacle to GOAL: {min_goal_distance:.2f}m")
+        
+        # Verify safety requirements
+        if min_start_distance < 0.8:
+            print(f"   ⚠️ WARNING: Start position only {min_start_distance:.2f}m from obstacle (requires 0.8m)")
+        else:
+            print(f"   ✅ Start position is SAFE ({min_start_distance:.2f}m clearance)")
+            
+        if min_goal_distance < 0.8:
+            print(f"   ⚠️ WARNING: Goal position only {min_goal_distance:.2f}m from obstacle (requires 0.8m)")
+        else:
+            print(f"   ✅ Goal position is SAFE ({min_goal_distance:.2f}m clearance)")
         
         self.model = mujoco.MjModel.from_xml_path("environment.xml")
         self.data = mujoco.MjData(self.model)
@@ -555,22 +635,132 @@ class UAVEnv(gym.Env):
         self.step_count = 0
         self._episode_timestep = 0
         
+        # Print episode separator
+        print("\n" + "="*60)
+        print(f"🔄 EPISODE {self.current_episode} RESET")
+        print("="*60)
+        
         # Regenerate obstacles first (before setting positions)
         if self.curriculum_learning:
             self.load_curriculum_map()
         else:
             self.obstacles = EnvironmentGenerator.generate_obstacles()
-            # Set dynamic goal position (randomly select from three available corners)
-            CONFIG['goal_pos'] = self._get_random_goal_position()
-            # Ensure start position is safe from obstacles
-            self._ensure_safe_start_position()
+            
+            print(f"   📄 Before position generation, CONFIG values:")
+            print(f"      Start: {CONFIG['start_pos']}")
+            print(f"      Goal: {CONFIG['goal_pos']}")
+            
+            # Use grid-based safe position generation for both start and goal
+            print("   📊 Attempting: Grid-Based Safe Position Generation...")
+            start, goal = self._generate_safe_positions_grid(self.obstacles)
+            if start is not None and goal is not None:
+                print("   ✅ SUCCESS: Using Grid-Based Method for both Start and Goal")
+                CONFIG['start_pos'] = start
+                CONFIG['goal_pos'] = goal
+            else:
+                # Fallback to corner-based method
+                print("   ⚠️  Grid method failed, falling back to Corner-Based Method...")
+                CONFIG['goal_pos'] = self._get_random_goal_position(self.obstacles)
+                CONFIG['start_pos'] = self._get_safe_start_position(self.obstacles)
+                print("   ✅ Using Corner-Based Fallback Method")
+            
+            print(f"   📄 After position generation, CONFIG values:")
+            print(f"      Start: {CONFIG['start_pos']}")
+            print(f"      Goal: {CONFIG['goal_pos']}")
+            
             EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+        
+        # Calculate nearest obstacle distances for safety verification
+        min_start_distance = float('inf')
+        min_goal_distance = float('inf')
+        
+        for obs in self.obstacles:
+            obs_pos = np.array(obs['pos'])
+            
+            # Calculate distance from start
+            start_dist = np.linalg.norm(CONFIG['start_pos'][:2] - obs_pos[:2])
+            if obs['shape'] == 'box':
+                start_dist -= max(obs['size'][0], obs['size'][1])
+            elif obs['shape'] == 'cylinder':
+                start_dist -= obs['size'][0]
+            min_start_distance = min(min_start_distance, start_dist)
+            
+            # Calculate distance from goal
+            goal_dist = np.linalg.norm(CONFIG['goal_pos'][:2] - obs_pos[:2])
+            if obs['shape'] == 'box':
+                goal_dist -= max(obs['size'][0], obs['size'][1])
+            elif obs['shape'] == 'cylinder':
+                goal_dist -= obs['size'][0]
+            min_goal_distance = min(min_goal_distance, goal_dist)
+        
+        print(f"   📏 Nearest obstacle to START: {min_start_distance:.2f}m")
+        print(f"   📏 Nearest obstacle to GOAL: {min_goal_distance:.2f}m")
+        
+        # Verify safety requirements and RE-GENERATE if unsafe
+        max_retries = 5
+        retry_count = 0
+        
+        while (min_start_distance < 0.8 or min_goal_distance < 0.8) and retry_count < max_retries:
+            retry_count += 1
+            print(f"   🔄 RETRY {retry_count}/{max_retries}: Re-generating unsafe positions...")
+            
+            # Re-generate positions using grid-based method
+            start, goal = self._generate_safe_positions_grid(self.obstacles)
+            if start is not None and goal is not None:
+                CONFIG['start_pos'] = start
+                CONFIG['goal_pos'] = goal
+            else:
+                # Fallback with reduced safety if grid fails
+                print(f"   ⚠️  Grid failed on retry, using corner fallback with 0.5m safety...")
+                CONFIG['goal_pos'] = self._get_random_goal_position(self.obstacles)
+                CONFIG['start_pos'] = self._get_safe_start_position(self.obstacles)
+            
+            # Recalculate distances
+            min_start_distance = float('inf')
+            min_goal_distance = float('inf')
+            
+            for obs in self.obstacles:
+                obs_pos = np.array(obs['pos'])
+                
+                # Calculate distance from start
+                start_dist = np.linalg.norm(CONFIG['start_pos'][:2] - obs_pos[:2])
+                if obs['shape'] == 'box':
+                    start_dist -= max(obs['size'][0], obs['size'][1])
+                elif obs['shape'] == 'cylinder':
+                    start_dist -= obs['size'][0]
+                min_start_distance = min(min_start_distance, start_dist)
+                
+                # Calculate distance from goal
+                goal_dist = np.linalg.norm(CONFIG['goal_pos'][:2] - obs_pos[:2])
+                if obs['shape'] == 'box':
+                    goal_dist -= max(obs['size'][0], obs['size'][1])
+                elif obs['shape'] == 'cylinder':
+                    goal_dist -= obs['size'][0]
+                min_goal_distance = min(min_goal_distance, goal_dist)
+            
+            print(f"      After retry - Start: {min_start_distance:.2f}m, Goal: {min_goal_distance:.2f}m")
+            
+            # Update XML with new positions
+            EnvironmentGenerator.create_xml_with_obstacles(self.obstacles)
+        
+        # Final safety status
+        if min_start_distance < 0.8:
+            print(f"   ⚠️ WARNING: Start position only {min_start_distance:.2f}m from obstacle (requires 0.8m)")
+        else:
+            print(f"   ✅ Start position is SAFE ({min_start_distance:.2f}m clearance)")
+            
+        if min_goal_distance < 0.8:
+            print(f"   ⚠️ WARNING: Goal position only {min_goal_distance:.2f}m from obstacle (requires 0.8m)")
+        else:
+            print(f"   ✅ Goal position is SAFE ({min_goal_distance:.2f}m clearance)")
         
         # Verify start and goal positions are not too close (safety check)
         start_goal_distance = np.linalg.norm(CONFIG['start_pos'][:2] - CONFIG['goal_pos'][:2])
+        print(f"   📐 Start-Goal Distance: {start_goal_distance:.2f}m")
+        
         if start_goal_distance < 1.0:
-            print(f"⚠️ Warning: Start-goal distance only {start_goal_distance:.2f}m - adjusting goal position")
-            CONFIG['goal_pos'] = self._get_random_goal_position()
+            print(f"   ⚠️ Warning: Start-goal distance only {start_goal_distance:.2f}m - adjusting goal position")
+            CONFIG['goal_pos'] = self._get_random_goal_position(self.obstacles)
         
         # Reset UAV position and state with constant height
         self.data.qpos[:3] = CONFIG['start_pos']
@@ -615,28 +805,60 @@ class UAVEnv(gym.Env):
         
         return self._get_obs(), {}
 
-    def _ensure_safe_start_position(self):
-        """Ensure start position is safe from obstacles and goal"""
-        max_attempts = 50
+    def _get_safe_start_position(self, obstacles):
+        """Get a safe start position from obstacles and goal
+        
+        Args:
+            obstacles: List of obstacle dictionaries to check safety against
+            
+        Returns:
+            np.ndarray: Safe start position
+        """
         safety_radius = 0.8  # Keep at least 0.8m from obstacles
         
-        for attempt in range(max_attempts):
-            # Get a random corner position
+        # Try all 4 corners first
+        half_world = CONFIG['world_size'] / 2 - 1.0
+        all_corners = [
+            np.array([-half_world, -half_world, CONFIG['uav_flight_height']]),  # Bottom-left
+            np.array([half_world, -half_world, CONFIG['uav_flight_height']]),   # Bottom-right
+            np.array([-half_world, half_world, CONFIG['uav_flight_height']]),   # Top-left
+            np.array([half_world, half_world, CONFIG['uav_flight_height']])     # Top-right
+        ]
+        
+        random.shuffle(all_corners)
+        for corner in all_corners:
+            if EnvironmentGenerator.check_position_safety(corner, obstacles, safety_radius):
+                goal_distance = np.linalg.norm(corner[:2] - CONFIG['goal_pos'][:2])
+                if goal_distance > 2.0:
+                    print(f"✅ Safe start at corner: [{corner[0]:.1f}, {corner[1]:.1f}]")
+                    return corner
+        
+        # Try random corner positions with more variation
+        for attempt in range(30):
             candidate_start = EnvironmentGenerator.get_random_corner_position()
-            
-            # Check if position is safe from obstacles
-            if EnvironmentGenerator.check_position_safety(candidate_start, self.obstacles, safety_radius):
-                # Check minimum distance from goal (at least 2m apart)
+            if EnvironmentGenerator.check_position_safety(candidate_start, obstacles, safety_radius):
                 goal_distance = np.linalg.norm(candidate_start[:2] - CONFIG['goal_pos'][:2])
                 if goal_distance > 2.0:
-                    CONFIG['start_pos'] = candidate_start
-                    print(f"✅ Safe start position: [{CONFIG['start_pos'][0]:.1f}, {CONFIG['start_pos'][1]:.1f}] (attempt {attempt+1})")
-                    return
+                    print(f"✅ Safe start position: [{candidate_start[0]:.1f}, {candidate_start[1]:.1f}] (attempt {attempt+1})")
+                    return candidate_start
+        
+        # Try with reduced safety margin
+        print("⚠️ Trying start positions with reduced safety (0.5m)...")
+        for corner in all_corners:
+            if EnvironmentGenerator.check_position_safety(corner, obstacles, 0.5):
+                goal_distance = np.linalg.norm(corner[:2] - CONFIG['goal_pos'][:2])
+                if goal_distance > 1.5:
+                    print(f"⚠️ Start with reduced safety: [{corner[0]:.1f}, {corner[1]:.1f}]")
+                    return corner
         
         # If no safe position found, use default corner and warn
-        print("⚠️ Warning: Could not find safe start position after 50 attempts!")
+        print("⚠️ Warning: Could not find safe start position!")
         print("⚠️ Using default corner position [-3, -3, 1] - may be unsafe")
-        CONFIG['start_pos'] = np.array([-3.0, -3.0, 1.0])
+        return np.array([-3.0, -3.0, 1.0])
+    
+    def _ensure_safe_start_position(self):
+        """Ensure start position is safe from obstacles and goal (updates CONFIG)"""
+        CONFIG['start_pos'] = self._get_safe_start_position(self.obstacles)
 
     # =====================
     # Neurosymbolic helpers
@@ -826,29 +1048,108 @@ class UAVEnv(gym.Env):
         if self.viewer:
             self.viewer.close()
     
-    def _get_random_goal_position(self):
-        """Select a safe random goal position, preferring corners but falling back to anywhere if needed"""
-        # First try corner positions (traditional approach)
+    def _generate_safe_positions_grid(self, obstacles, safety_radius=0.8, grid_resolution=0.3):
+        """Generate safe start and goal positions using grid-based approach
+        
+        This is the most reliable method for dense obstacle environments
+        """
+        half_world = CONFIG['world_size'] / 2
+        safe_positions = []
+        
+        # Grid sampling
+        x_coords = np.arange(-half_world + 1.0, half_world - 1.0, grid_resolution)
+        y_coords = np.arange(-half_world + 1.0, half_world - 1.0, grid_resolution)
+        
+        for x in x_coords:
+            for y in y_coords:
+                candidate = np.array([x, y, CONFIG['uav_flight_height']])
+                if EnvironmentGenerator.check_position_safety(candidate, obstacles, safety_radius):
+                    safe_positions.append(candidate)
+        
+        if len(safe_positions) < 2:
+            print(f"⚠️ Grid method: Only {len(safe_positions)} safe positions found, trying reduced safety...")
+            # Try with reduced safety
+            return self._generate_safe_positions_grid(obstacles, safety_radius=0.5, grid_resolution=0.25)
+        
+        # Prefer corners for start
+        half_world_corner = half_world - 1.0
+        corners = [
+            np.array([-half_world_corner, -half_world_corner, CONFIG['uav_flight_height']]),
+            np.array([half_world_corner, -half_world_corner, CONFIG['uav_flight_height']]),
+            np.array([-half_world_corner, half_world_corner, CONFIG['uav_flight_height']]),
+            np.array([half_world_corner, half_world_corner, CONFIG['uav_flight_height']]),
+        ]
+        
+        # Find safe positions near corners
+        start = None
+        for corner in corners:
+            for safe_pos in safe_positions:
+                if np.linalg.norm(safe_pos[:2] - corner[:2]) < 0.5:
+                    start = safe_pos
+                    break
+            if start is not None:
+                break
+        
+        if start is None:
+            start = random.choice(safe_positions)
+        
+        # Find goal farthest from start
+        valid_goals = [pos for pos in safe_positions 
+                      if np.linalg.norm(pos[:2] - start[:2]) > 2.0]
+        
+        if len(valid_goals) == 0:
+            valid_goals = [pos for pos in safe_positions 
+                          if np.linalg.norm(pos[:2] - start[:2]) > 1.0]
+        
+        if len(valid_goals) == 0:
+            return None, None
+        
+        goal = max(valid_goals, key=lambda p: np.linalg.norm(p[:2] - start[:2]))
+        
+        print(f"✅ Grid-based safe positions: Start[{start[0]:.1f}, {start[1]:.1f}], Goal[{goal[0]:.1f}, {goal[1]:.1f}]")
+        print(f"   Safety: {safety_radius:.1f}m, Found {len(safe_positions)} safe positions")
+        print(f"   📍 Setting CONFIG['start_pos'] = {start}")
+        print(f"   🎯 Setting CONFIG['goal_pos'] = {goal}")
+        
+        return start, goal
+    
+    def _get_random_goal_position(self, obstacles):
+        """Select a safe random goal position, preferring corners but falling back to anywhere if needed
+        
+        Args:
+            obstacles: List of obstacle dictionaries to check safety against
+        """
+        # First try corner positions (all 4 corners)
         half_world = CONFIG['world_size'] / 2
         safety_margin = 1.0  # Keep 1.0m away from boundary
         
         corners = [
             np.array([half_world - safety_margin, half_world - safety_margin, CONFIG['uav_flight_height']]),    # Top-right [3, 3]
             np.array([half_world - safety_margin, -half_world + safety_margin, CONFIG['uav_flight_height']]),   # Bottom-right [3, -3]
-            np.array([-half_world + safety_margin, half_world - safety_margin, CONFIG['uav_flight_height']])    # Top-left [-3, 3]
+            np.array([-half_world + safety_margin, half_world - safety_margin, CONFIG['uav_flight_height']]),   # Top-left [-3, 3]
+            np.array([-half_world + safety_margin, -half_world + safety_margin, CONFIG['uav_flight_height']])   # Bottom-left [-3, -3]
         ]
         
         # Try each corner randomly until we find a safe one
         random.shuffle(corners)
         for corner in corners:
-            if hasattr(self, 'obstacles') and EnvironmentGenerator.check_position_safety(corner, self.obstacles, 0.8):
+            if EnvironmentGenerator.check_position_safety(corner, obstacles, 0.8):
+                print(f"✅ Safe goal at corner: [{corner[0]:.1f}, {corner[1]:.1f}]")
                 return corner
         
         # If no corner is safe, try random positions anywhere in the map
+        for attempt in range(50):
+            candidate_goal = EnvironmentGenerator.get_random_goal_position()
+            if EnvironmentGenerator.check_position_safety(candidate_goal, obstacles, 0.8):
+                print(f"✅ Safe goal position (non-corner): [{candidate_goal[0]:.1f}, {candidate_goal[1]:.1f}]")
+                return candidate_goal
+        
+        # Last resort: try positions with reduced safety margin
+        print("⚠️ Trying goal positions with reduced safety (0.5m)...")
         for attempt in range(30):
             candidate_goal = EnvironmentGenerator.get_random_goal_position()
-            if hasattr(self, 'obstacles') and EnvironmentGenerator.check_position_safety(candidate_goal, self.obstacles, 0.8):
-                print(f"✅ Safe goal position (non-corner): [{candidate_goal[0]:.1f}, {candidate_goal[1]:.1f}]")
+            if EnvironmentGenerator.check_position_safety(candidate_goal, obstacles, 0.5):
+                print(f"⚠️ Goal with reduced safety: [{candidate_goal[0]:.1f}, {candidate_goal[1]:.1f}]")
                 return candidate_goal
         
         # Fallback to a corner (may be unsafe but training will continue)

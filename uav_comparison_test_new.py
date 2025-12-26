@@ -217,6 +217,65 @@ def check_position_safety(position, obstacles, safety_radius=0.8):
             return False
     return True
 
+def generate_safe_positions_grid(obstacles, safety_radius=0.8, grid_resolution=0.3, world_size=8.0, flight_height=1.0):
+    """Generate safe start and goal positions using grid-based approach
+    
+    This is the most reliable method for dense obstacle environments
+    """
+    half_world = world_size / 2
+    safe_positions = []
+    
+    # Grid sampling
+    x_coords = np.arange(-half_world + 1.0, half_world - 1.0, grid_resolution)
+    y_coords = np.arange(-half_world + 1.0, half_world - 1.0, grid_resolution)
+    
+    for x in x_coords:
+        for y in y_coords:
+            candidate = [x, y, flight_height]
+            if check_position_safety(candidate, obstacles, safety_radius):
+                safe_positions.append(candidate)
+    
+    if len(safe_positions) < 2:
+        # Try with reduced safety
+        return generate_safe_positions_grid(obstacles, safety_radius=0.5, grid_resolution=0.25, world_size=world_size, flight_height=flight_height)
+    
+    # Prefer corners for start
+    half_world_corner = half_world - 1.0
+    corners = [
+        [-half_world_corner, -half_world_corner, flight_height],
+        [half_world_corner, -half_world_corner, flight_height],
+        [-half_world_corner, half_world_corner, flight_height],
+        [half_world_corner, half_world_corner, flight_height],
+    ]
+    
+    # Find safe positions near corners
+    start = None
+    for corner in corners:
+        for safe_pos in safe_positions:
+            if np.linalg.norm(np.array(safe_pos[:2]) - np.array(corner[:2])) < 0.5:
+                start = safe_pos
+                break
+        if start is not None:
+            break
+    
+    if start is None:
+        start = random.choice(safe_positions)
+    
+    # Find goal farthest from start
+    valid_goals = [pos for pos in safe_positions 
+                  if np.linalg.norm(np.array(pos[:2]) - np.array(start[:2])) > 2.0]
+    
+    if len(valid_goals) == 0:
+        valid_goals = [pos for pos in safe_positions 
+                      if np.linalg.norm(np.array(pos[:2]) - np.array(start[:2])) > 1.0]
+    
+    if len(valid_goals) == 0:
+        return None, None
+    
+    goal = max(valid_goals, key=lambda p: np.linalg.norm(np.array(p[:2]) - np.array(start[:2])))
+    
+    return start, goal
+
 def run_comprehensive_comparison():
     """Run comprehensive comparison with 1 map per obstacle level, tracking trajectories"""
     
@@ -273,23 +332,130 @@ def run_comprehensive_comparison():
             
             obstacles = generate_random_obstacles(obstacle_count)
             
-            # Generate safe start and goal positions
-            max_position_attempts = 20
-            for attempt in range(max_position_attempts):
-                start_pos = generate_random_corner_position()
-                goal_pos = generate_random_goal_position(start_pos, obstacles)
-                
-                if check_position_safety(start_pos, obstacles):
-                    break
-                
-                if attempt == max_position_attempts - 1:
-                    print(f"⚠️ Using default positions")
-                    start_pos = [-3.0, -3.0, 1.0]
-                    goal_pos = [3.0, 3.0, 1.0]
+            print("\n   " + "═" * 56)
+            print("   📍 POSITION GENERATION")
+            print("   " + "═" * 56)
+            print(f"   📄 Before position generation:")
+            print(f"      Start: None")
+            print(f"      Goal: None")
             
+            # Generate safe start and goal positions using grid-based method
+            print("\n   📊 Attempting: Grid-Based Safe Position Generation...")
+            start_pos, goal_pos = generate_safe_positions_grid(obstacles)
+            
+            if start_pos is None or goal_pos is None:
+                # Fallback to corner-based method
+                print("   ⚠️  Grid method failed, falling back to Corner-Based Method...")
+                max_position_attempts = 20
+                for attempt in range(max_position_attempts):
+                    start_pos = generate_random_corner_position()
+                    goal_pos = generate_random_goal_position(start_pos, obstacles)
+                    
+                    if check_position_safety(start_pos, obstacles):
+                        break
+                    
+                    if attempt == max_position_attempts - 1:
+                        print(f"   ⚠️ Using default positions")
+                        start_pos = [-3.0, -3.0, 1.0]
+                        goal_pos = [3.0, 3.0, 1.0]
+                print("   ✅ Using Corner-Based Fallback Method")
+            else:
+                print("   ✅ SUCCESS: Using Grid-Based Method for both Start and Goal")
+            
+            print(f"   📄 After position generation:")
+            print(f"      Start: {start_pos}")
+            print(f"      Goal: {goal_pos}")
+            
+            print("\n   " + "═" * 56)
+            print("   🛡️  SAFETY VERIFICATION")
+            print("   " + "═" * 56)
+            
+            # Verify safety requirements and RE-GENERATE if unsafe
+            max_retries = 5
+            retry_count = 0
+            
+            # Calculate nearest obstacle distances
+            min_start_distance = float('inf')
+            min_goal_distance = float('inf')
+            
+            for obs in obstacles:
+                obs_pos = np.array(obs['pos'])
+                
+                # Calculate distance from start
+                start_dist = np.linalg.norm(np.array(start_pos[:2]) - obs_pos[:2])
+                if obs['shape'] == 'box':
+                    start_dist -= max(obs['size'][0], obs['size'][1])
+                elif obs['shape'] == 'cylinder':
+                    start_dist -= obs['size'][0]
+                min_start_distance = min(min_start_distance, start_dist)
+                
+                # Calculate distance from goal
+                goal_dist = np.linalg.norm(np.array(goal_pos[:2]) - obs_pos[:2])
+                if obs['shape'] == 'box':
+                    goal_dist -= max(obs['size'][0], obs['size'][1])
+                elif obs['shape'] == 'cylinder':
+                    goal_dist -= obs['size'][0]
+                min_goal_distance = min(min_goal_distance, goal_dist)
+            
+            # Retry if positions are unsafe
+            while (min_start_distance < 0.8 or min_goal_distance < 0.8) and retry_count < max_retries:
+                retry_count += 1
+                print(f"   🔄 RETRY {retry_count}/{max_retries}: Re-generating unsafe positions...")
+                print(f"      Current - Start: {min_start_distance:.2f}m, Goal: {min_goal_distance:.2f}m")
+                
+                # Re-generate positions using grid-based method
+                start_pos, goal_pos = generate_safe_positions_grid(obstacles)
+                if start_pos is None or goal_pos is None:
+                    # Fallback
+                    start_pos = generate_random_corner_position()
+                    goal_pos = generate_random_goal_position(start_pos, obstacles)
+                
+                # Recalculate distances
+                min_start_distance = float('inf')
+                min_goal_distance = float('inf')
+                
+                for obs in obstacles:
+                    obs_pos = np.array(obs['pos'])
+                    
+                    start_dist = np.linalg.norm(np.array(start_pos[:2]) - obs_pos[:2])
+                    if obs['shape'] == 'box':
+                        start_dist -= max(obs['size'][0], obs['size'][1])
+                    elif obs['shape'] == 'cylinder':
+                        start_dist -= obs['size'][0]
+                    min_start_distance = min(min_start_distance, start_dist)
+                    
+                    goal_dist = np.linalg.norm(np.array(goal_pos[:2]) - obs_pos[:2])
+                    if obs['shape'] == 'box':
+                        goal_dist -= max(obs['size'][0], obs['size'][1])
+                    elif obs['shape'] == 'cylinder':
+                        goal_dist -= obs['size'][0]
+                    min_goal_distance = min(min_goal_distance, goal_dist)
+                
+                print(f"      After retry - Start: {min_start_distance:.2f}m, Goal: {min_goal_distance:.2f}m")
+            
+            print("\n   " + "─" * 56)
+            print("   📋 FINAL SAFETY STATUS")
+            print("   " + "─" * 56)
+            # Print final positions and safety status
             print(f"   🟢 Start: [{start_pos[0]:.1f}, {start_pos[1]:.1f}, {start_pos[2]:.1f}]")
             print(f"   🔵 Goal:  [{goal_pos[0]:.1f}, {goal_pos[1]:.1f}, {goal_pos[2]:.1f}]")
             print(f"   🧱 Obstacles: {len(obstacles)}")
+            print(f"   📏 Nearest obstacle to START: {min_start_distance:.2f}m")
+            print(f"   📏 Nearest obstacle to GOAL: {min_goal_distance:.2f}m")
+            
+            if min_start_distance < 0.8:
+                print(f"   ⚠️ WARNING: Start position only {min_start_distance:.2f}m from obstacle (requires 0.8m)")
+            else:
+                print(f"   ✅ Start position is SAFE ({min_start_distance:.2f}m clearance)")
+                
+            if min_goal_distance < 0.8:
+                print(f"   ⚠️ WARNING: Goal position only {min_goal_distance:.2f}m from obstacle (requires 0.8m)")
+            else:
+                print(f"   ✅ Goal position is SAFE ({min_goal_distance:.2f}m clearance)")
+            
+            # Calculate and display start-goal distance
+            start_goal_distance = np.linalg.norm(np.array(start_pos[:2]) - np.array(goal_pos[:2]))
+            print(f"   📐 Start-Goal Distance: {start_goal_distance:.2f}m")
             
             # Generate MuJoCo XML for this map
             map_xml = generate_mujoco_xml(obstacles, start_pos, goal_pos)
@@ -297,10 +463,17 @@ def run_comprehensive_comparison():
             # Create obstacle folder name with map ID
             obstacle_folder_name = f"obstacles_{obstacle_count}"
             
+            print("\n   " + "═" * 56)
+            print("   🤖 MODEL TESTING")
+            print("   " + "═" * 56)
+            
             # Test all three models on the SAME map
             for model in models:
                 current_test += 1
-                print(f"\n   🤖 Testing {model['name']} ({current_test}/{total_tests})")
+                print(f"\n   ┌" + "─" * 54 + "┐")
+                print(f"   │ 🤖 {model['name']:<47} │")
+                print(f"   │ Test {current_test}/{total_tests:<46} │")
+                print(f"   └" + "─" * 54 + "┘")
                 
                 # Create folder structure: agent_name/obstacles_X/map_Y/trajectories/
                 agent_dir = os.path.join(results_dir, model["name"])
