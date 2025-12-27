@@ -591,42 +591,42 @@ async function saveAgentsData(data) {
 }
 
 async function main() {
-    console.log('🚀 Starting UAV Training, Data Generation and Upload Process...');
+    console.log('🚀 Starting UAV Testing, Data Generation and Upload Process...');
     console.log(`⏰ Timestamp: ${new Date().toISOString()}\n`);
 
     try {
-        // Step 1: Run training script (COMMENTED OUT)
-        console.log('🎓 Step 1: Running training script with NS PPO...');
-        const { pythonCmd } = await runTrainingScript();
-        console.log('✅ Training completed successfully!\n');
+        // // Step 1: Run training script (COMMENTED OUT)
+        // console.log('🎓 Step 1: Running training script with NS PPO...');
+        // const { pythonCmd } = await runTrainingScript();
+        // console.log('✅ Training completed successfully!\n');
 
-        // Step 2: Upload trained weights
-        console.log('📦 Step 2: Uploading trained weights...');
-        const weightsUploadResult = await uploadWeights();
-        console.log(`✅ Weights uploaded: ${weightsUploadResult.uploadCount} files\n`);
+        // // Step 2: Upload trained weights
+        // console.log('📦 Step 2: Uploading trained weights...');
+        // const weightsUploadResult = await uploadWeights();
+        // console.log(`✅ Weights uploaded: ${weightsUploadResult.uploadCount} files\n`);
 
-        // Step 2.5: Upload training plots and logs
-        console.log('📊 Step 2.5: Uploading training plots and logs...');
-        const artifactsUploadResult = await uploadTrainingArtifacts();
-        console.log(`✅ Training artifacts uploaded: ${artifactsUploadResult.uploadCount} files\n`);
+        // // Step 2.5: Upload training plots and logs
+        // console.log('📊 Step 2.5: Uploading training plots and logs...');
+        // const artifactsUploadResult = await uploadTrainingArtifacts();
+        // console.log(`✅ Training artifacts uploaded: ${artifactsUploadResult.uploadCount} files\n`);
 
         // Step 3: Execute the UAV comparison test
-        console.log('🚁 Step 3: Starting UAV comparison test...');
-        await executePythonScript();
+        console.log('🚁 Step 1: Starting UAV comparison test...');
+        const { pythonCmd } = await executePythonScript();
         console.log('✅ UAV comparison test completed!\n');
 
-        // Step 4: Process map XML files (add boundaries and remove reflectance)
-        console.log('🔧 Step 4: Processing map XML files...');
+        // Step 2: Process map XML files (add boundaries and remove reflectance)
+        console.log('🔧 Step 2: Processing map XML files...');
         await processMapXMLFiles(pythonCmd);
 
-        // Step 5: Collect all generated data
-        console.log('📊 Step 5: Collecting generated data...');
+        // Step 3: Collect all generated data
+        console.log('📊 Step 3: Collecting generated data...');
         const agentsData = await collectAgentsData();
 
         console.log(`📦 Data collected: ${Object.keys(agentsData.agents).length} agents`);
 
-        // Step 6: Upload to Cloudflare R2
-        console.log('☁️  Step 6: Uploading agents data...');
+        // Step 4: Upload to Cloudflare R2
+        console.log('☁️  Step 4: Uploading agents data...');
         const uploadResult = await saveAgentsData(agentsData);
 
         console.log('\n✅ Process completed successfully!');
