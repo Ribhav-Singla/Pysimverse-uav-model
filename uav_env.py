@@ -107,16 +107,16 @@ class RDRRuleSystem:
         self.all_rules["R1_CLEAR_PATH"] = rule_clear_path
         
         # Rule 2: Boundary safety - reduce velocity in the direction/axis of nearby boundary
-        # rule_boundary_safety = RDRRule(
-        #     rule_id="R2_BOUNDARY_SAFETY",
-        #     condition=self._condition_near_boundary,
-        #     conclusion="Near boundary: Reduce velocity in boundary direction",
-        #     action_params={"velocity_reduction": 0.4}
-        # )
-        # self.default_rule.add_exception(rule_boundary_safety)
-        # self.all_rules["R2_BOUNDARY_SAFETY"] = rule_boundary_safety
+        rule_boundary_safety = RDRRule(
+            rule_id="R2_BOUNDARY_SAFETY",
+            condition=self._condition_near_boundary,
+            conclusion="Near boundary: Reduce velocity in boundary direction",
+            action_params={"velocity_reduction": 0.4}
+        )
+        self.default_rule.add_exception(rule_boundary_safety)
+        self.all_rules["R2_BOUNDARY_SAFETY"] = rule_boundary_safety
         
-        # print(f"🔧 Enhanced RDR System Initialized with {len(self.all_rules)} rules (Default + Clear Path + Boundary Safety)")
+        print(f"🔧 Enhanced RDR System Initialized with {len(self.all_rules)} rules (Default + Clear Path + Boundary Safety)")
     
     # =====================
     # Condition Functions (Simplified)
@@ -148,7 +148,7 @@ class RDRRuleSystem:
         # Check both clear path and boundary safety rules (not the default rule R0)
         specific_rules = [
             "R1_CLEAR_PATH",
-            # "R2_BOUNDARY_SAFETY"
+            "R2_BOUNDARY_SAFETY"
         ]
         
         # Check if any specific rule condition is met
@@ -671,8 +671,13 @@ class UAVEnv(gym.Env):
         # Direct LOS check - no confirmation steps needed
         return (min_obs_dist >= goal_dist - 1e-6)
 
-    def symbolic_action(self, t_step=None):
-        """Compute RDR-based action in env action space (vx, vy, vz=0)."""
+    def symbolic_action(self, t_step=None, ppo_action=None):
+        """Compute RDR-based action in env action space (vx, vy, vz=0).
+        
+        Args:
+            t_step: Current timestep in episode
+            ppo_action: PPO agent's proposed action to augment (not overwrite)
+        """
         if t_step is None:
             t_step = self._episode_timestep
         
@@ -687,8 +692,8 @@ class UAVEnv(gym.Env):
         applicable_rule = self.rdr_system.evaluate_rules(context)
         self.current_rule = applicable_rule
         
-        # Generate action based on rule
-        action = self._generate_action_from_rule(applicable_rule, context)
+        # Generate action based on rule - augment PPO action instead of overwriting
+        action = self._generate_action_from_rule(applicable_rule, context, ppo_action=ppo_action)
         
         # Update rule usage
         applicable_rule.usage_count += 1
@@ -729,8 +734,20 @@ class UAVEnv(gym.Env):
             'velocity': self.data.qvel[:3]
         }
     
-    def _generate_action_from_rule(self, rule: RDRRule, context: Dict[str, Any]) -> np.ndarray:
-        """Generate action based on RDR rule parameters - simplified"""
+    def _generate_action_from_rule(self, rule: RDRRule, context: Dict[str, Any], ppo_action=None) -> np.ndarray:
+        """Generate action based on RDR rule parameters - augments PPO action instead of overwriting
+        
+        NEUROSYMBOLIC APPROACH:
+        - Expert rules augment (not replace) PPO actions
+        - PPO gets honest feedback about augmented actions
+        - Policy learns to internalize expert knowledge over time
+        - Smooth transition from guided to autonomous behavior
+        
+        Args:
+            rule: The RDR rule to apply
+            context: Context dictionary with environment state
+            ppo_action: PPO agent's proposed action to augment (not overwrite)
+        """
         
         # Get rule parameters
         speed_modifier = rule.action_params.get('speed_modifier', 0.2)
@@ -740,25 +757,34 @@ class UAVEnv(gym.Env):
         goal_vector = context['goal_vector'][:2]
         goal_direction = goal_vector / (np.linalg.norm(goal_vector) + 1e-8)
         
-        # Start with current velocity as base
-        modified_vel = current_vel.copy()
+        # Start with PPO action if provided, otherwise use current velocity
+        if ppo_action is not None:
+            # Extract velocity components from PPO action
+            ppo_action_flat = np.array(ppo_action).flatten()
+            modified_vel = ppo_action_flat[:2].copy()
+        else:
+            # Fallback to current velocity if no PPO action provided
+            modified_vel = current_vel.copy()
         
-        # Simple velocity modification based on rule type
+        # Apply rule-specific augmentation to PPO action
         if rule.rule_id == "R1_CLEAR_PATH":
-            # Clear path: Increase velocity toward goal
-            modified_vel = current_vel + speed_modifier * goal_direction
+            # R1: Augment PPO action by adding goal-directed velocity boost
+            # PPO learns: "When clear path exists, moving faster toward goal yields good rewards"
+            # Over time, PPO internalizes this and takes similar actions independently
+            modified_vel = modified_vel + speed_modifier * goal_direction
             
         elif rule.rule_id == "R2_BOUNDARY_SAFETY":
-            # Simplified boundary safety: Reduce velocity only in the axis/direction of nearby boundary
+            # R2: Augment PPO action by reducing velocity near boundaries
+            # PPO learns: "When near boundaries, slowing down in that direction avoids penalties"
+            # Over time, PPO learns boundary awareness and avoids aggressive moves near edges
             velocity_reduction = rule.action_params.get('velocity_reduction', 0.4)
             
             pos = context['position'][:2]  # X,Y position
             half_world = CONFIG['world_size'] / 2
             
-            # Start with current velocity
-            modified_vel = current_vel.copy()
+            # Start with PPO action (already set in modified_vel)
+            # Now reduce velocity only in the specific axis of the nearby boundary
             
-            # Reduce velocity only in the specific axis of the nearby boundary
             # Check X-axis boundaries (east/west)
             if pos[0] > half_world - 0.8:  # Near east boundary
                 # Reduce velocity in X direction if moving eastward

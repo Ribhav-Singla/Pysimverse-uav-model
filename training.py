@@ -511,8 +511,13 @@ def main():
             if use_neurosymbolic and ns_lambda >= 1.0:
                 # Check if RDR system has a specific (non-default) rule available
                 if env.has_specific_rdr_rule():
-                    # Specific rule available - get and use RDR action
-                    sym = np.array(env.symbolic_action(), dtype=np.float32)
+                    # NEUROSYMBOLIC ACTION AUGMENTATION:
+                    # 1. PPO proposes action based on current policy
+                    # 2. Expert rule augments (not replaces) PPO action
+                    # 3. Augmented action is executed in environment
+                    # 4. PPO receives reward from augmented action
+                    # 5. PPO learns to internalize expert knowledge
+                    sym = np.array(env.symbolic_action(ppo_action=ppo_action_np), dtype=np.float32)
                     if sym.ndim == 1:
                         sym = np.expand_dims(sym, axis=0)
                     final_action = sym
