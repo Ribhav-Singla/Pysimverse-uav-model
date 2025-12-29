@@ -9,6 +9,7 @@
   },
   "scripts": {
     "worker": "node worker.js",
+    "worker_all": "node worker_all.js",
     "delete-agents": "node delete-agents-r2.js"
   }
 }
