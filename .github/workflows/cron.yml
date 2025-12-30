@@ -1,4 +1,4 @@
-name: UAV Data Generator
+name: UAV Training and Testing Pipeline
 
 on:
   schedule:
@@ -7,9 +7,10 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 jobs:
-  generate-and-upload:
+  train-and-upload:
+    name: Train Models and Upload Weights
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours timeout for long-running simulations
+    timeout-minutes: 360  # 6 hours timeout for training
 
     steps:
       - name: Checkout repository
@@ -39,25 +40,85 @@ jobs:
         run: |
           while true; do echo "$(date): $(free -h)" >> memory.log; sleep 30; done &
 
-      - name: Run UAV data generation and upload
-        timeout-minutes: 350  # 5 hours and 50 minutes for the main task
+      - name: Run UAV training and upload weights
+        timeout-minutes: 350  # 5 hours and 50 minutes for training
         env:
           CLOUDFLARE_JURISDICTION_ENDPOINT: ${{ secrets.CLOUDFLARE_JURISDICTION_ENDPOINT }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-        run: npm run worker_all.js
+        run: npm run worker_train
 
       - name: Check for OOM kills after failure
         if: failure()
         run: |
           dmesg | grep -i "killed process" || echo "No OOM kills found"
 
-      - name: Upload logs on failure
+      - name: Upload training logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: error-logs-${{ github.run_number }}
+          name: training-error-logs-${{ github.run_number }}
+          path: |
+            *.log
+            *.csv
+            *.png
+            memory.log
+          retention-days: 7
+
+  test-and-upload:
+    name: Download Weights, Test, and Upload Results
+    runs-on: ubuntu-latest
+    needs: train-and-upload  # Wait for training to complete
+    timeout-minutes: 360  # 6 hours timeout for testing
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node.js dependencies
+        run: npm install
+
+      - name: Start memory monitor
+        run: |
+          while true; do echo "$(date): $(free -h)" >> memory.log; sleep 30; done &
+
+      - name: Run UAV testing and upload results
+        timeout-minutes: 350  # 5 hours and 50 minutes for testing
+        env:
+          CLOUDFLARE_JURISDICTION_ENDPOINT: ${{ secrets.CLOUDFLARE_JURISDICTION_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: npm run worker_test
+
+      - name: Check for OOM kills after failure
+        if: failure()
+        run: |
+          dmesg | grep -i "killed process" || echo "No OOM kills found"
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-error-logs-${{ github.run_number }}
           path: |
             *.log
             Agents/
