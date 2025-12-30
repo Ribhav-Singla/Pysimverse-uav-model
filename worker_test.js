@@ -75,9 +75,9 @@ async function downloadWeights() {
 
         // List of weight files to download (all three PPO types)
         const weightFiles = [
-            'PPO_UAVEnv_vanilla.pth',
-            'PPO_UAVEnv_ar.pth',
-            'PPO_UAVEnv_ns.pth'
+            'Vanilla_PPO_UAV_Weights.pth',
+            'AR_PPO_UAV_Weights.pth',
+            'NS_PPO_UAV_Weights.pth'
         ];
 
         let downloadCount = 0;
@@ -105,7 +105,7 @@ async function downloadWeights() {
         console.log(`   ❌ Failed: ${errorCount} files`);
 
         if (downloadCount === 0) {
-            throw new Error('No weights were downloaded successfully');
+            throw new Error('No weights were downloaded successfully. Training job may have failed or weights were not uploaded to R2.');
         }
 
         return { downloadCount, errorCount };
@@ -174,7 +174,8 @@ async function executePythonScript() {
                 if (code === 0) {
                     console.log(`\n✅ Comparison test completed successfully after ${elapsed} minutes`);
                     resolve({ success: true, pythonCmd: cmd });
-                } else if (!hasOutput) {
+                } else if (!hasOutput || code === 9009) {
+                    // 9009 is Windows error code for "command not found"
                     console.log(`   ❌ ${cmd} not available`);
                     currentIndex++;
                     tryNextCommand();
