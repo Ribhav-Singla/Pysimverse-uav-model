@@ -37,15 +37,15 @@ jobs:
           STATUS_TEXT="TEST SUCCESS"
           
           # Create message
-          MESSAGE="🧪 *Test Telegram Notification*
-
-Repository: ${{ github.repository }}
-Workflow: ${{ github.workflow }}
-Job: Test Telegram Notification
-Run: ${{ github.run_number }}
-Status: ${STATUS_TEXT}
-
-View Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          MESSAGE="🧪 Test Telegram Notification
+          
+          Repository: ${{ github.repository }}
+          Workflow: ${{ github.workflow }}
+          Job: Test Telegram Notification
+          Run: ${{ github.run_number }}
+          Status: ${STATUS_TEXT}
+          
+          View Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           
           # Send text message
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
