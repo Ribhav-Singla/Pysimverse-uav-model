@@ -31,8 +31,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train UAV with different PPO variants')
     parser.add_argument('--ppo_type', type=str, choices=['vanilla', 'ar', 'ns'], default='ns',
                         help='PPO variant to train: vanilla (basic PPO), ar (PPO with additional rewards), ns (neurosymbolic PPO) (default: ns)')
-    parser.add_argument('--episodes', type=int, default=50,
-                        help='Episodes per curriculum level (default: 50)')
+    parser.add_argument('--episodes', type=int, default=40,
+                        help='Episodes per curriculum level (default: 40)')
     args = parser.parse_args()
     
     ############## Hyperparameters ##############
@@ -44,23 +44,22 @@ def main():
     # Curriculum Learning Parameters
     curriculum_learning = True
     episodes_per_level_count = args.episodes  # Episodes per curriculum level (from command line)
-    total_levels = 10           # Obstacle levels 1-10
+    total_levels = 15           # Obstacle levels 1-15
     
     # Set equal episodes for each level
     episodes_per_level = [episodes_per_level_count] * total_levels
-    total_episodes = episodes_per_level_count * total_levels  # 300 * 10 = 3000 episodes
-
+    total_episodes = episodes_per_level_count * total_levels  # 300 * 15 = 4500 episodes
     max_episodes = total_episodes
     max_timesteps = 20000        # max timesteps in one episode
 
     update_timestep = 1024      # OPTIMIZED: update policy every 1024 timesteps (was 2048)
     action_std = 1.0            # OPTIMIZED: Start with 100% exploration (was 0.3)
-    K_epochs = 11               # update policy for K epochs (reduced for faster updates)
+    K_epochs = 10               # update policy for K epochs (reduced for faster updates)
     eps_clip = 0.1              # clip parameter for PPO (reduced for finer control)
     gamma = 0.999               # increased for longer-term planning
 
-    lr_actor = 0.00005          # learning rate for actor (reduced for stability)
-    lr_critic = 0.0002          # learning rate for critic (reduced for stability)
+    lr_actor = 0.00005           # learning rate for actor (standard PPO value: 3e-4)
+    lr_critic = 0.0002           # learning rate for critic (standard PPO value: 1e-3)
 
     random_seed = 0
     #############################################

@@ -9,7 +9,8 @@
   },
   "scripts": {
     "worker": "node worker.js",
-    "worker_all": "node worker_all.js",
+    "worker_train": "node worker_train.js",
+    "worker_test": "node worker_test.js",
     "delete-agents": "node delete-agents-r2.js"
   }
 }

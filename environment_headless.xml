@@ -7,7 +7,7 @@
     <geom name="ground" type="plane" size="4.0 4.0 0.1"/>
     
     <!-- UAV starting position -->
-    <body name="chassis" pos="3.0 3.0 1.0">
+    <body name="chassis" pos="-3.0 3.0 1.0">
       <joint type="free" name="root"/>
       <geom name="uav_body" type="box" size="0.12 0.12 0.03" rgba="1.0 0.0 0.0 1.0" mass="0.8"/>
       
@@ -17,7 +17,7 @@
       <site name="motor3" pos="0.06 -0.06 0" size="0.01"/>
       <site name="motor4" pos="-0.06 -0.06 0" size="0.01"/>
     </body>
-    <geom name="test_obs_0" type="box" size="0.0974319963887521 0.09612178150826269 1.0" pos="0.7155403783579714 -2.9386062462314904 1.0" rgba="0.3013453101432104 0.22722765407023512 0.8608530117736595 1.0"/>
+    <geom name="test_obs_0" type="cylinder" size="0.062467587058207895 1.0" pos="-2.7816483533296608 -0.5318427508372919 1.0" rgba="0.20141581591850422 0.7655304404453908 0.5437781561548933 1.0"/>
   </worldbody>
 
   <actuator>

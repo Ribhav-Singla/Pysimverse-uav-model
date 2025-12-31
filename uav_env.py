@@ -119,23 +119,40 @@ class RDRRuleSystem:
         print(f"🔧 Enhanced RDR System Initialized with {len(self.all_rules)} rules (Default + Clear Path + Boundary Safety)")
     
     # =====================
-    # Condition Functions (Simplified)
+    # Condition Functions (Robust Design - Prevention over Detection)
     # =====================
     
     def _condition_clear_path_to_goal(self, ctx: Dict[str, Any]) -> bool:
-        """Rule 1: Clear path to goal - check if line of sight is clear"""
-        return ctx.get('has_los_to_goal', False)
+        """Rule 1: Clear path to goal - BALANCED check for frequent activation
+        
+        Key insight: Boost when the NARROW cone toward goal is clear.
+        Using narrow cone (±15°) means rule activates more often.
+        
+        Requirements for R1 activation:
+        1. Clearance in goal direction > 1.5m (reasonable forward clearance)
+        2. No obstacle extremely close (>0.5m minimum around UAV)
+        """
+        goal_direction_clearance = ctx.get('goal_direction_clearance', 0.0)
+        min_obs_dist = ctx.get('min_obstacle_dist', 0.0)
+        
+        # Safety check: only avoid boost if obstacle is VERY close
+        if min_obs_dist < 0.5:  # Relaxed from 0.8 to 0.5
+            return False
+        
+        # Primary check: Is there reasonable clearance toward goal?
+        # 1.5m clearance in goal direction is enough to safely boost
+        if goal_direction_clearance < 1.5:  # Relaxed from complex check to simple threshold
+            return False
+        
+        return True
     
     def _condition_near_boundary(self, ctx: Dict[str, Any]) -> bool:
-        """Rule 2: Boundary safety - check if UAV is close to world boundaries (NOT obstacles)
+        """Rule 2: Boundary safety - activate when approaching world boundaries
         
-        This rule only activates for actual world boundaries, not for obstacles.
-        The distance_to_boundary is calculated from the UAV's position relative to 
-        the world edges (±half_world), ensuring this rule doesn't interfere with 
-        obstacle avoidance handled by PPO.
+        This rule provides smooth, proportional boundary avoidance.
         """
         distance_to_boundary = ctx.get('distance_to_boundary', float('inf'))
-        return distance_to_boundary < 0.8  # Within 0.8m of any world boundary
+        return distance_to_boundary < 1.2  # Activate within 1.2m of boundary
     
 
     
@@ -707,13 +724,32 @@ class UAVEnv(gym.Env):
         return action
     
     def _prepare_rdr_context(self, pos: np.ndarray, lidar_readings: np.ndarray, obs: np.ndarray) -> Dict[str, Any]:
-        """Prepare context dictionary for RDR rule evaluation - simplified"""
+        """Prepare context dictionary for RDR rule evaluation - with directional clearance analysis"""
         
         # Basic positioning
         goal_vector = CONFIG['goal_pos'] - pos
+        goal_direction = goal_vector[:2] / (np.linalg.norm(goal_vector[:2]) + 1e-8)
         
-        # LIDAR analysis - only minimum distance needed
+        # LIDAR analysis - minimum distance and directional clearance
         min_obstacle_dist = float(np.min(lidar_readings) * CONFIG['lidar_range'])
+        
+        # Calculate clearance in the goal direction (most important for R1)
+        # LIDAR rays are distributed 360 degrees, find the ray closest to goal direction
+        num_rays = len(lidar_readings)
+        goal_angle = np.arctan2(goal_direction[1], goal_direction[0])  # Angle to goal
+        
+        # Check clearance in a NARROW cone toward goal (±15 degrees = 30° total)
+        # Narrow cone = fewer rays checked = more likely to find clear path
+        cone_half_angle = np.radians(15)
+        goal_direction_clearance = CONFIG['lidar_range']  # Start with max range
+        
+        for i, reading in enumerate(lidar_readings):
+            ray_angle = 2 * np.pi * i / num_rays  # Angle of this LIDAR ray
+            angle_diff = abs(np.arctan2(np.sin(ray_angle - goal_angle), np.cos(ray_angle - goal_angle)))
+            
+            if angle_diff < cone_half_angle:  # Ray is within cone toward goal
+                ray_dist = reading * CONFIG['lidar_range']
+                goal_direction_clearance = min(goal_direction_clearance, ray_dist)
         
         # Boundary analysis - only minimum distance needed
         half_world = CONFIG['world_size'] / 2
@@ -728,10 +764,13 @@ class UAVEnv(gym.Env):
         return {
             'position': pos,
             'goal_vector': goal_vector,
+            'goal_direction': goal_direction,
             'has_los_to_goal': self.has_line_of_sight_to_goal(),
             'min_obstacle_dist': min_obstacle_dist,
+            'goal_direction_clearance': goal_direction_clearance,  # NEW: clearance specifically toward goal
             'distance_to_boundary': distance_to_boundary,
-            'velocity': self.data.qvel[:3]
+            'velocity': self.data.qvel[:3],
+            'lidar_readings': lidar_readings  # Pass full LIDAR for advanced analysis
         }
     
     def _generate_action_from_rule(self, rule: RDRRule, context: Dict[str, Any], ppo_action=None) -> np.ndarray:
@@ -768,42 +807,82 @@ class UAVEnv(gym.Env):
         
         # Apply rule-specific augmentation to PPO action
         if rule.rule_id == "R1_CLEAR_PATH":
-            # R1: Augment PPO action by adding goal-directed velocity boost
-            # PPO learns: "When clear path exists, moving faster toward goal yields good rewards"
-            # Over time, PPO internalizes this and takes similar actions independently
-            modified_vel = modified_vel + speed_modifier * goal_direction
+            # R1: SMOOTH goal-directed boost that scales with clearance
+            # Key: Boost is PROPORTIONAL to how clear the path is - never full boost unless very clear
+            
+            goal_direction_clearance = context.get('goal_direction_clearance', 0.0)
+            goal_dist = np.linalg.norm(goal_vector)
+            
+            # Calculate confidence factor based on how clear the path is
+            # 0.0 = barely clear, 1.0 = very clear (clearance >> goal distance)
+            if goal_dist > 0.1:
+                clearance_ratio = goal_direction_clearance / goal_dist
+                confidence = min(1.0, (clearance_ratio - 1.0) / 2.0)  # 0 at ratio=1, 1.0 at ratio=3+
+            else:
+                confidence = 1.0  # Very close to goal, full confidence
+            
+            confidence = max(0.0, confidence)  # Ensure non-negative
+            
+            # Smooth boost: scale by confidence and blend with PPO action
+            # Never override PPO completely - always a blend
+            effective_boost = speed_modifier * confidence * 0.7  # Max 70% of speed_modifier
+            
+            # Add boost in goal direction, blended with current PPO action
+            modified_vel = modified_vel + effective_boost * goal_direction
             
         elif rule.rule_id == "R2_BOUNDARY_SAFETY":
-            # R2: Augment PPO action by reducing velocity near boundaries
-            # PPO learns: "When near boundaries, slowing down in that direction avoids penalties"
-            # Over time, PPO learns boundary awareness and avoids aggressive moves near edges
+            # R2: SMOOTH boundary avoidance with proportional response
+            # Key: Response scales smoothly with proximity - no sudden changes
+            
             velocity_reduction = rule.action_params.get('velocity_reduction', 0.4)
             
-            pos = context['position'][:2]  # X,Y position
+            pos = context['position'][:2]
             half_world = CONFIG['world_size'] / 2
+            boundary_threshold = 1.2  # Match condition threshold
             
-            # Start with PPO action (already set in modified_vel)
-            # Now reduce velocity only in the specific axis of the nearby boundary
+            # Calculate distance to each boundary
+            dist_east = half_world - pos[0]
+            dist_west = half_world + pos[0]
+            dist_north = half_world - pos[1]
+            dist_south = half_world + pos[1]
             
-            # Check X-axis boundaries (east/west)
-            if pos[0] > half_world - 0.8:  # Near east boundary
-                # Reduce velocity in X direction if moving eastward
+            # Smooth proximity factor: 0 at threshold, 1 at boundary
+            # Using squared falloff for smoother transition
+            def smooth_proximity(dist):
+                if dist >= boundary_threshold:
+                    return 0.0
+                t = 1.0 - (dist / boundary_threshold)
+                return t * t  # Quadratic for smooth increase near boundary
+            
+            # X-axis boundary handling (smooth, proportional)
+            if dist_east < boundary_threshold:
+                prox = smooth_proximity(dist_east)
+                # Reduce eastward velocity proportionally
                 if modified_vel[0] > 0:
-                    modified_vel[0] = max(0, modified_vel[0] - velocity_reduction)
-            elif pos[0] < -(half_world - 0.8):  # Near west boundary
-                # Reduce velocity in X direction if moving westward
+                    modified_vel[0] *= (1.0 - prox * 0.8)  # Reduce up to 80%
+                # Add gentle westward nudge
+                modified_vel[0] -= 0.15 * prox
+                
+            if dist_west < boundary_threshold:
+                prox = smooth_proximity(dist_west)
+                # Reduce westward velocity proportionally
                 if modified_vel[0] < 0:
-                    modified_vel[0] = min(0, modified_vel[0] + velocity_reduction)
+                    modified_vel[0] *= (1.0 - prox * 0.8)
+                # Add gentle eastward nudge
+                modified_vel[0] += 0.15 * prox
             
-            # Check Y-axis boundaries (north/south)
-            if pos[1] > half_world - 0.8:  # Near north boundary
-                # Reduce velocity in Y direction if moving northward
+            # Y-axis boundary handling (smooth, proportional)
+            if dist_north < boundary_threshold:
+                prox = smooth_proximity(dist_north)
                 if modified_vel[1] > 0:
-                    modified_vel[1] = max(0, modified_vel[1] - velocity_reduction)
-            elif pos[1] < -(half_world - 0.8):  # Near south boundary
-                # Reduce velocity in Y direction if moving southward
+                    modified_vel[1] *= (1.0 - prox * 0.8)
+                modified_vel[1] -= 0.15 * prox
+                
+            if dist_south < boundary_threshold:
+                prox = smooth_proximity(dist_south)
                 if modified_vel[1] < 0:
-                    modified_vel[1] = min(0, modified_vel[1] + velocity_reduction)
+                    modified_vel[1] *= (1.0 - prox * 0.8)
+                modified_vel[1] += 0.15 * prox
             
         
         # Clip velocity components to [-1, 1] range
