@@ -148,7 +148,7 @@ class RDRRuleSystem:
         # Check both clear path and boundary safety rules (not the default rule R0)
         specific_rules = [
             "R1_CLEAR_PATH",
-            # "R2_BOUNDARY_SAFETY"
+            "R2_BOUNDARY_SAFETY"
         ]
         
         # Check if any specific rule condition is met
