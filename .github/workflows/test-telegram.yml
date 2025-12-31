@@ -36,32 +36,26 @@ jobs:
           STATUS_EMOJI="✅"
           STATUS_TEXT="TEST SUCCESS"
           
-          MESSAGE="${STATUS_EMOJI} *UAV Training Job ${STATUS_TEXT}*%0A%0A"
-          MESSAGE+="Repository: ${{ github.repository }}%0A"
-          MESSAGE+="Workflow: ${{ github.workflow }}%0A"
-          MESSAGE+="Job: Test Telegram Notification%0A"
-          MESSAGE+="Run: ${{ github.run_number }}%0A"
-          MESSAGE+="Commit: ${{ github.sha }}%0A"
-          MESSAGE+="Branch: ${{ github.ref_name }}%0A"
-          MESSAGE+="Triggered by: ${{ github.event_name }}%0A%0A"
-          MESSAGE+="[View Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          # Create message with escaped special characters
+          cat > message.txt << 'EOF'
+          ✅ *UAV Training Job TEST SUCCESS*
+          
+          Repository: ${{ github.repository }}
+          Workflow: ${{ github.workflow }}
+          Job: Test Telegram Notification
+          Run: ${{ github.run_number }}
+          Commit: ${{ github.sha }}
+          Branch: ${{ github.ref_name }}
+          Triggered by: ${{ github.event_name }}
+          
+          View Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
           
           # Send text message
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
-            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
-            -d text="${MESSAGE}" \
-            -d parse_mode="Markdown" \
-            -d disable_web_page_preview=true
+            -F chat_id="${{ secrets.TG_CHAT_ID }}" \
+            -F text="<$(cat message.txt)" \
+            -F parse_mode="Markdown"
           
-          # Send training images if they exist
-          for png_file in *.png; do
-            if [ -f "$png_file" ]; then
-              echo "📸 Sending image: $png_file"
-              curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendPhoto" \
-                -F chat_id="${{ secrets.TG_CHAT_ID }}" \
-                -F photo=@"$png_file" \
-                -F caption="Training Result: $png_file"
-            fi
-          done
-          
+          echo ""
           echo "✅ Test notification sent successfully!"

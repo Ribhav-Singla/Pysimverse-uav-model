@@ -84,26 +84,29 @@ jobs:
             STATUS_TEXT="FAILED"
           fi
           
-          MESSAGE="${STATUS_EMOJI} *UAV Training Job ${STATUS_TEXT}*%0A%0A"
-          MESSAGE+="Repository: ${{ github.repository }}%0A"
-          MESSAGE+="Workflow: ${{ github.workflow }}%0A"
-          MESSAGE+="Job: Train Models and Upload Weights%0A"
-          MESSAGE+="Run: ${{ github.run_number }}%0A"
-          MESSAGE+="Commit: ${{ github.sha }}%0A"
-          MESSAGE+="Branch: ${{ github.ref_name }}%0A"
-          MESSAGE+="Triggered by: ${{ github.event_name }}%0A%0A"
-          MESSAGE+="[View Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          # Create message file to avoid escaping issues
+          cat > message.txt << EOF
+          ${STATUS_EMOJI} *UAV Training Job ${STATUS_TEXT}*
+          
+          Repository: ${{ github.repository }}
+          Workflow: ${{ github.workflow }}
+          Job: Train Models and Upload Weights
+          Run: ${{ github.run_number }}
+          Commit: ${{ github.sha }}
+          Branch: ${{ github.ref_name }}
+          Triggered by: ${{ github.event_name }}
+          
+          View Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
           
           # Send text message
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
-            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
-            -d text="${MESSAGE}" \
-            -d parse_mode="Markdown" \
-            -d disable_web_page_preview=true
+            -F chat_id="${{ secrets.TG_CHAT_ID }}" \
+            -F text="<$(cat message.txt)"
           
-          # Send training images if they exist
+          # Send training images if they exist (only real PNG files)
           for png_file in *.png; do
-            if [ -f "$png_file" ]; then
+            if [ -f "$png_file" ] && file "$png_file" | grep -q "PNG image"; then
               echo "📸 Sending image: $png_file"
               curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendPhoto" \
                 -F chat_id="${{ secrets.TG_CHAT_ID }}" \
@@ -183,18 +186,21 @@ jobs:
             STATUS_TEXT="FAILED"
           fi
           
-          MESSAGE="${STATUS_EMOJI} *UAV Testing Job ${STATUS_TEXT}*%0A%0A"
-          MESSAGE+="Repository: ${{ github.repository }}%0A"
-          MESSAGE+="Workflow: ${{ github.workflow }}%0A"
-          MESSAGE+="Job: Download Weights, Test, and Upload Results%0A"
-          MESSAGE+="Run: ${{ github.run_number }}%0A"
-          MESSAGE+="Commit: ${{ github.sha }}%0A"
-          MESSAGE+="Branch: ${{ github.ref_name }}%0A"
-          MESSAGE+="Triggered by: ${{ github.event_name }}%0A%0A"
-          MESSAGE+="[View Run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          # Create message file to avoid escaping issues
+          cat > message.txt << EOF
+          ${STATUS_EMOJI} *UAV Testing Job ${STATUS_TEXT}*
+          
+          Repository: ${{ github.repository }}
+          Workflow: ${{ github.workflow }}
+          Job: Download Weights, Test, and Upload Results
+          Run: ${{ github.run_number }}
+          Commit: ${{ github.sha }}
+          Branch: ${{ github.ref_name }}
+          Triggered by: ${{ github.event_name }}
+          
+          View Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
           
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
-            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
-            -d text="${MESSAGE}" \
-            -d parse_mode="Markdown" \
-            -d disable_web_page_preview=true
+            -F chat_id="${{ secrets.TG_CHAT_ID }}" \
+            -F text="<$(cat message.txt)"
