@@ -58,8 +58,8 @@ def main():
     eps_clip = 0.1              # clip parameter for PPO (reduced for finer control)
     gamma = 0.999               # increased for longer-term planning
 
-    lr_actor = 0.0003           # learning rate for actor (standard PPO value: 3e-4)
-    lr_critic = 0.001           # learning rate for critic (standard PPO value: 1e-3)
+    lr_actor = 0.00005           # learning rate for actor (standard PPO value: 3e-4)
+    lr_critic = 0.0002           # learning rate for critic (standard PPO value: 1e-3)
 
     random_seed = 0
     #############################################
