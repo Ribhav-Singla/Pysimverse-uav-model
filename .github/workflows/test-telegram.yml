@@ -36,26 +36,21 @@ jobs:
           STATUS_EMOJI="✅"
           STATUS_TEXT="TEST SUCCESS"
           
-          # Create message with escaped special characters
-          cat > message.txt << 'EOF'
-          ✅ *UAV Training Job TEST SUCCESS*
-          
-          Repository: ${{ github.repository }}
-          Workflow: ${{ github.workflow }}
-          Job: Test Telegram Notification
-          Run: ${{ github.run_number }}
-          Commit: ${{ github.sha }}
-          Branch: ${{ github.ref_name }}
-          Triggered by: ${{ github.event_name }}
-          
-          View Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          EOF
+          # Create message
+          MESSAGE="🧪 *Test Telegram Notification*
+
+Repository: ${{ github.repository }}
+Workflow: ${{ github.workflow }}
+Job: Test Telegram Notification
+Run: ${{ github.run_number }}
+Status: ${STATUS_TEXT}
+
+View Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           
           # Send text message
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
-            -F chat_id="${{ secrets.TG_CHAT_ID }}" \
-            -F text="<$(cat message.txt)" \
-            -F parse_mode="Markdown"
+            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
+            -d text="${MESSAGE}"
           
           echo ""
           echo "✅ Test notification sent successfully!"
