@@ -10,6 +10,9 @@
   "scripts": {
     "worker": "node worker.js",
     "worker_train": "node worker_train.js",
+    "worker_train_vanilla": "node worker_train_vanilla.js",
+    "worker_train_ar" : "node worker_train_ar.js",
+    "worker_train_ns": "node worker_train_ns.js",
     "worker_test": "node worker_test.js",
     "delete-agents": "node delete-agents-r2.js"
   }
