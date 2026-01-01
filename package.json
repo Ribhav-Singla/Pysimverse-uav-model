@@ -11,6 +11,16 @@
     "worker": "node worker.js",
     "worker_train": "node worker_train.js",
     "worker_test": "node worker_test.js",
-    "delete-agents": "node delete-agents-r2.js"
+    "delete-agents": "node delete-agents-r2.js",
+    
+    "train:vanilla": "node worker_train_single.js vanilla",
+    "train:ar": "node worker_train_single.js ar",
+    "train:ns": "node worker_train_single.js ns",
+    "train:all": "node worker_train.js",
+    
+    "test:vanilla": "node worker_test_single.js vanilla",
+    "test:ar": "node worker_test_single.js ar",
+    "test:ns": "node worker_test_single.js ns",
+    "test:all": "node worker_test.js"
   }
 }
