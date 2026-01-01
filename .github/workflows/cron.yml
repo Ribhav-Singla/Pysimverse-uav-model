@@ -13,8 +13,8 @@ on:
         default: false
 
 jobs:
-  train-and-upload:
-    name: Train Models and Upload Weights
+  train-vanilla-ppo:
+    name: Train Vanilla PPO and Upload Weights
     runs-on: ubuntu-latest
     if: ${{ !inputs.skip_training }}  # Skip if input is true
     timeout-minutes: 360  # 6 hours timeout for training
@@ -47,14 +47,14 @@ jobs:
         run: |
           while true; do echo "$(date): $(free -h)" >> memory.log; sleep 30; done &
 
-      - name: Run UAV training and upload weights
+      - name: Run Vanilla PPO training and upload weights
         timeout-minutes: 350  # 5 hours and 50 minutes for training
         env:
           CLOUDFLARE_JURISDICTION_ENDPOINT: ${{ secrets.CLOUDFLARE_JURISDICTION_ENDPOINT }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
-        run: npm run worker_train
+        run: npm run worker_train_vanilla
 
       - name: Check for OOM kills after failure
         if: failure()
@@ -65,11 +65,11 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: training-error-logs-${{ github.run_number }}
+          name: vanilla-training-error-logs-${{ github.run_number }}
           path: |
             *.log
             *.csv
-            *.png
+            *vanilla*.png
             memory.log
           retention-days: 7
 
@@ -84,11 +84,11 @@ jobs:
             STATUS_TEXT="FAILED"
           fi
           
-          MESSAGE="${STATUS_EMOJI} UAV Training Job ${STATUS_TEXT}
+          MESSAGE="${STATUS_EMOJI} Vanilla PPO Training ${STATUS_TEXT}
           
           Repository: ${{ github.repository }}
           Workflow: ${{ github.workflow }}
-          Job: Train Models and Upload Weights
+          Job: Train Vanilla PPO and Upload Weights
           Run: ${{ github.run_number }}
           Commit: ${{ github.sha }}
           Branch: ${{ github.ref_name }}
@@ -100,21 +100,217 @@ jobs:
             -d chat_id="${{ secrets.TG_CHAT_ID }}" \
             -d text="${MESSAGE}"
           
-          # Send training images if they exist (only real PNG files)
-          for png_file in *.png; do
+          # Send training images if they exist (only Vanilla PNG files)
+          for png_file in *vanilla*.png *VANILLA*.png goal_achievement_VANILLA.png; do
             if [ -f "$png_file" ] && file "$png_file" | grep -q "PNG image"; then
               echo "📸 Sending image: $png_file"
               curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendPhoto" \
                 -F chat_id="${{ secrets.TG_CHAT_ID }}" \
                 -F photo=@"$png_file" \
-                -F caption="$png_file"
+                -F caption="Vanilla PPO: $png_file"
+            fi
+          done
+
+  train-ar-ppo:
+    name: Train AR PPO and Upload Weights
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_training }}  # Skip if input is true
+    timeout-minutes: 360  # 6 hours timeout for training
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node.js dependencies
+        run: npm install
+
+      - name: Start memory monitor
+        run: |
+          while true; do echo "$(date): $(free -h)" >> memory.log; sleep 30; done &
+
+      - name: Run AR PPO training and upload weights
+        timeout-minutes: 350  # 5 hours and 50 minutes for training
+        env:
+          CLOUDFLARE_JURISDICTION_ENDPOINT: ${{ secrets.CLOUDFLARE_JURISDICTION_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: npm run worker_train_ar
+
+      - name: Check for OOM kills after failure
+        if: failure()
+        run: |
+          dmesg | grep -i "killed process" || echo "No OOM kills found"
+
+      - name: Upload training logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ar-training-error-logs-${{ github.run_number }}
+          path: |
+            *.log
+            *.csv
+            *ar*.png
+            memory.log
+          retention-days: 7
+
+      - name: Send Telegram notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            STATUS_EMOJI="✅"
+            STATUS_TEXT="SUCCESS"
+          else
+            STATUS_EMOJI="❌"
+            STATUS_TEXT="FAILED"
+          fi
+          
+          MESSAGE="${STATUS_EMOJI} AR PPO Training ${STATUS_TEXT}
+          
+          Repository: ${{ github.repository }}
+          Workflow: ${{ github.workflow }}
+          Job: Train AR PPO and Upload Weights
+          Run: ${{ github.run_number }}
+          Commit: ${{ github.sha }}
+          Branch: ${{ github.ref_name }}
+          
+          View: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          
+          # Send text message
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
+            -d text="${MESSAGE}"
+          
+          # Send training images if they exist (only AR PNG files)
+          for png_file in *ar*.png *AR*.png goal_achievement_AR.png; do
+            if [ -f "$png_file" ] && file "$png_file" | grep -q "PNG image"; then
+              echo "📸 Sending image: $png_file"
+              curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendPhoto" \
+                -F chat_id="${{ secrets.TG_CHAT_ID }}" \
+                -F photo=@"$png_file" \
+                -F caption="AR PPO: $png_file"
+            fi
+          done
+
+  train-ns-ppo:
+    name: Train NS PPO and Upload Weights
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.skip_training }}  # Skip if input is true
+    timeout-minutes: 360  # 6 hours timeout for training
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node.js dependencies
+        run: npm install
+
+      - name: Start memory monitor
+        run: |
+          while true; do echo "$(date): $(free -h)" >> memory.log; sleep 30; done &
+
+      - name: Run NS PPO training and upload weights
+        timeout-minutes: 350  # 5 hours and 50 minutes for training
+        env:
+          CLOUDFLARE_JURISDICTION_ENDPOINT: ${{ secrets.CLOUDFLARE_JURISDICTION_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: npm run worker_train_ns
+
+      - name: Check for OOM kills after failure
+        if: failure()
+        run: |
+          dmesg | grep -i "killed process" || echo "No OOM kills found"
+
+      - name: Upload training logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ns-training-error-logs-${{ github.run_number }}
+          path: |
+            *.log
+            *.csv
+            *ns*.png
+            memory.log
+          retention-days: 7
+
+      - name: Send Telegram notification
+        if: always()
+        run: |
+          if [ "${{ job.status }}" == "success" ]; then
+            STATUS_EMOJI="✅"
+            STATUS_TEXT="SUCCESS"
+          else
+            STATUS_EMOJI="❌"
+            STATUS_TEXT="FAILED"
+          fi
+          
+          MESSAGE="${STATUS_EMOJI} NS PPO Training ${STATUS_TEXT}
+          
+          Repository: ${{ github.repository }}
+          Workflow: ${{ github.workflow }}
+          Job: Train NS PPO and Upload Weights
+          Run: ${{ github.run_number }}
+          Commit: ${{ github.sha }}
+          Branch: ${{ github.ref_name }}
+          
+          View: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          
+          # Send text message
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TG_CHAT_ID }}" \
+            -d text="${MESSAGE}"
+          
+          # Send training images if they exist (only NS PNG files)
+          for png_file in *ns*.png *NS*.png goal_achievement_NS.png rdr_rules_usage_NS.png r1_rule_usage_NS.png r2_rule_usage_NS.png; do
+            if [ -f "$png_file" ] && file "$png_file" | grep -q "PNG image"; then
+              echo "📸 Sending image: $png_file"
+              curl -s -X POST "https://api.telegram.org/bot${{ secrets.TG_BOT_TOKEN }}/sendPhoto" \
+                -F chat_id="${{ secrets.TG_CHAT_ID }}" \
+                -F photo=@"$png_file" \
+                -F caption="NS PPO: $png_file"
             fi
           done
 
   test-and-upload:
     name: Download Weights, Test, and Upload Results
     runs-on: ubuntu-latest
-    needs: train-and-upload  # Wait for training to complete
+    needs: [train-vanilla-ppo, train-ar-ppo, train-ns-ppo]  # Wait for all three training jobs to complete
     if: ${{ !cancelled() && (success() || inputs.skip_training) }}  # Run if training succeeded OR if we're skipping training
     timeout-minutes: 360  # 6 hours timeout for testing
 
