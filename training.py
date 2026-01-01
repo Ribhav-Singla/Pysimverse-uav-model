@@ -33,6 +33,10 @@ def main():
                         help='PPO variant to train: vanilla (basic PPO), ar (PPO with additional rewards), ns (neurosymbolic PPO) (default: ns)')
     parser.add_argument('--episodes', type=int, default=40,
                         help='Episodes per curriculum level (default: 40)')
+    parser.add_argument('--start_level', type=int, default=1,
+                        help='Starting curriculum level (default: 1)')
+    parser.add_argument('--end_level', type=int, default=15,
+                        help='Ending curriculum level (default: 15)')
     args = parser.parse_args()
     
     ############## Hyperparameters ##############
@@ -44,11 +48,21 @@ def main():
     # Curriculum Learning Parameters
     curriculum_learning = True
     episodes_per_level_count = args.episodes  # Episodes per curriculum level (from command line)
+    start_level = args.start_level  # Starting level (from command line)
+    end_level = args.end_level      # Ending level (from command line)
     total_levels = 15           # Obstacle levels 1-15
+    
+    # Validate level range
+    if start_level < 1 or end_level > total_levels or start_level > end_level:
+        print(f"❌ Invalid level range: {start_level}-{end_level}. Must be between 1-{total_levels}")
+        return
+    
+    # Calculate training scope
+    levels_to_train = end_level - start_level + 1
     
     # Set equal episodes for each level
     episodes_per_level = [episodes_per_level_count] * total_levels
-    total_episodes = episodes_per_level_count * total_levels  # 300 * 15 = 4500 episodes
+    total_episodes = episodes_per_level_count * levels_to_train  # Only train selected levels
     max_episodes = total_episodes
     max_timesteps = 20000        # max timesteps in one episode
 
@@ -394,10 +408,11 @@ def main():
     print(f"   - Early Stopping: {early_stop_threshold*100:.0f}% success rate over 100 episodes")
     print()
     print("🎓 CURRICULUM LEARNING ENABLED")
-    print(f"   - Training across {total_levels} difficulty levels (1-10 obstacles)")
+    print(f"   - Training levels {start_level}-{end_level} (of {total_levels} total levels)")
     print(f"   - Total episodes: {total_episodes}")
     print("   - Episodes per level (equal distribution):")
-    for i, episodes in enumerate(episodes_per_level):
+    for i in range(start_level - 1, end_level):
+        episodes = episodes_per_level[i]
         print(f"     Level {i+1} ({i+1} obstacles): {episodes} episodes")
     print(f"   - 20 different maps per obstacle level")
     print("📊 LOGGING ENABLED")
@@ -430,8 +445,8 @@ def main():
     best_reward = -float('inf')
     
     # Initialize curriculum tracking
-    current_curriculum_level = 1
-    current_level_index = 0  # Index for episodes_per_level list
+    current_curriculum_level = start_level  # Start from specified level
+    current_level_index = start_level - 1  # Index for episodes_per_level list (0-indexed)
     episodes_in_current_level = 0
     level_rewards = []  # Track rewards for current level
     
@@ -439,7 +454,7 @@ def main():
     for i_episode in range(1, max_episodes+1):
         # Check if we need to advance curriculum level
         if curriculum_learning and episodes_in_current_level >= episodes_per_level[current_level_index]:
-            if current_curriculum_level < total_levels:
+            if current_curriculum_level < end_level:  # Only advance up to end_level
                 # Calculate average reward for completed level
                 if level_rewards:
                     avg_reward = sum(level_rewards) / len(level_rewards)

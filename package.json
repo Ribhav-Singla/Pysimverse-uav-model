@@ -13,6 +13,9 @@
     "worker_train_vanilla": "node worker_train_vanilla.js",
     "worker_train_ar" : "node worker_train_ar.js",
     "worker_train_ns": "node worker_train_ns.js",
+    "worker_train_ns_1_5": "node worker_train_ns_1_5.js",
+    "worker_train_ns_5_10": "node worker_train_ns_5_10.js",
+    "worker_train_ns_10_15": "node worker_train_ns_10_15.js",
     "worker_test": "node worker_test.js",
     "delete-agents": "node delete-agents-r2.js"
   }
