@@ -130,13 +130,13 @@ class RDRRuleSystem:
         
         Requirements for R1 activation:
         1. Clearance in goal direction > 1.5m (reasonable forward clearance)
-        2. No obstacle extremely close (>0.5m minimum around UAV)
+        2. No obstacle extremely close (>0.2m minimum around UAV)
         """
         goal_direction_clearance = ctx.get('goal_direction_clearance', 0.0)
         min_obs_dist = ctx.get('min_obstacle_dist', 0.0)
         
         # Safety check: only avoid boost if obstacle is VERY close
-        if min_obs_dist < 0.5:  # Relaxed from 0.8 to 0.5
+        if min_obs_dist < 0.2:  # Relaxed from 0.5 to 0.2
             return False
         
         # Primary check: Is there reasonable clearance toward goal?
